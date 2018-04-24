@@ -1,0 +1,256 @@
+From 46282b254d9535042230f2dee1c483cab15adf22 Mon Sep 17 00:00:00 2001
+From: Venkata Krishna Sundararajan <vsundara@qti.qualcomm.com>
+Date: Fri, 13 May 2016 13:15:27 +0530
+Subject: [PATCH] [ATD] Secondary ACL support
+
+Secondary ACL support for full offload implementation.
+
+Change-Id: Iff87227ee37d2b11f5f9d8d44dbdde9771ebc7a2
+Signed-off-by: Venkata Krishna Sundararajan <vsundara@qti.qualcomm.com>
+---
+ host/include/atd_cfg.h                 |   2 +
+ host/thin_driver/atd/atd_cfg.c         |  52 ++++++++++++++++
+ include/wmi.h                          |   2 +
+ target/linux/thin_driver/atd/atd_cfg.c | 109 +++++++++++++++++++++++++++++++++
+ 4 files changed, 165 insertions(+)
+
+diff --git a/host/include/atd_cfg.h b/host/include/atd_cfg.h
+index 991ab57..a4084c3 100644
+--- a/host/include/atd_cfg.h
++++ b/host/include/atd_cfg.h
+@@ -586,6 +586,8 @@ typedef struct atd_cfg_api {
+     a_status_t (*set_p2p_param)(adf_drv_handle_t hdl, acfg_p2p_param_t *p2p_param);
+ 	a_status_t (*acl_setmac)(adf_drv_handle_t hdl, acfg_macaddr_t *mac, 
+ 								a_uint8_t add);
++    a_status_t (*acl_setmac_sec)(adf_drv_handle_t hdl, acfg_macaddr_t *mac,
++                                                                a_uint8_t add);
+ 	a_status_t (*get_profile)(adf_drv_handle_t hdl, 
+ 									acfg_radio_vap_info_t *profile);
+ 
+diff --git a/host/thin_driver/atd/atd_cfg.c b/host/thin_driver/atd/atd_cfg.c
+index c9d3f5f..38dcaeb 100644
+--- a/host/thin_driver/atd/atd_cfg.c
++++ b/host/thin_driver/atd/atd_cfg.c
+@@ -154,6 +154,9 @@ static a_status_t atd_cfg_set_p2p_param(adf_drv_handle_t hdl,
+ static a_status_t atd_cfg_acl_setmac(adf_drv_handle_t hdl, 
+                                         acfg_macaddr_t *mac,
+ 										a_uint8_t add);
++static a_status_t atd_cfg_acl_setmac_sec(adf_drv_handle_t hdl,
++                                        acfg_macaddr_t *mac,
++                                                                                a_uint8_t add);
+ static a_status_t atd_cfg_get_profile(adf_drv_handle_t hdl, 
+ 										acfg_radio_vap_info_t *profile);
+ static a_status_t atd_cfg_phyerr(adf_drv_handle_t hdl, acfg_ath_diag_t *ath_diag);
+@@ -290,6 +293,7 @@ atd_cfg_vap_t      vap_cfg = {
+     .dbgreq           = atd_cfg_dbgreq,
+     .send_mgmt        = atd_cfg_send_mgmt,
+     .acl_setmac	      = atd_cfg_acl_setmac,
++    .acl_setmac_sec   = atd_cfg_acl_setmac_sec,
+     .set_chn_widthswitch = atd_cfg_set_chwidthswitch,
+     .set_atf_ssid     = atd_cfg_set_atf_ssid,
+     .set_atf_sta      = atd_cfg_set_atf_sta,
+@@ -7352,6 +7356,54 @@ fail:
+ }
+ 
+ a_status_t
++atd_cfg_acl_setmac_sec(adf_drv_handle_t hdl, acfg_macaddr_t *mac, a_uint8_t add)
++{
++    a_status_t          status = A_STATUS_OK;
++    atd_host_vap_t    *vap = (atd_host_vap_t *)hdl;
++    atd_host_wifi_t   *wifi = vap->wifisc;
++    adf_nbuf_t         nbuf;
++    acfg_macaddr_t    *pmac;
++    a_int32_t          resp;
++
++    atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
++
++    if ((nbuf = _atd_wmi_msg_alloc(__wifi2wmi(wifi))) == NULL) {
++        atd_trace(ATD_DEBUG_CFG, ("Unable to allocate wmi buffer \n"));
++        status = A_STATUS_ENOMEM;
++        goto fail ;
++    }
++    pmac = (acfg_macaddr_t *)atd_prep_cfg_hdr(nbuf, sizeof(acfg_macaddr_t),
++                                              wifi, vap);
++
++    memcpy(pmac->addr, mac->addr, ACFG_MACADDR_LEN);
++
++    atd_trace(ATD_DEBUG_CFG, (" ap mac addr %02x:%02x:%02x:%02x:%02x:%02x", \
++                pmac->addr[0], pmac->addr[1], pmac->addr[2], pmac->addr[3], \
++                pmac->addr[4], pmac->addr[5]));
++        if (add) {
++            status = wmi_cmd_send(__wifi2wmi(wifi), WMI_CMD_ACL_ADDMAC_SEC, nbuf,
++                (a_uint8_t *)&resp, sizeof(a_int32_t));
++        } else {
++            status = wmi_cmd_send(__wifi2wmi(wifi), WMI_CMD_ACL_DELMAC_SEC, nbuf,
++                (a_uint8_t *)&resp, sizeof(a_int32_t));
++        }
++    if (status != A_STATUS_OK) {
++        atd_trace(ATD_DEBUG_CFG, (" wmi_cmd_send Failed stat = %x\n", status));
++        status = A_STATUS_EINVAL;
++        goto fail;
++    }
++    resp = adf_os_ntohl(resp);
++    if(resp == -1)
++        status = A_STATUS_EINVAL;
++
++fail:
++    atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("End stat %x ",status ));
++
++    return status;
++}
++
++
++a_status_t
+ atd_cfg_get_profile(adf_drv_handle_t       hdl, acfg_radio_vap_info_t *profile)
+ {
+     atd_host_wifi_t         *wifi  = (atd_host_wifi_t * ) hdl;
+diff --git a/include/wmi.h b/include/wmi.h
+index 67fa44f..076f59c 100644
+--- a/include/wmi.h
++++ b/include/wmi.h
+@@ -135,6 +135,8 @@ enum wmi_id {
+ 	
+     WMI_CMD_ACL_ADDMAC,
+     WMI_CMD_ACL_DELMAC,
++    WMI_CMD_ACL_ADDMAC_SEC,
++    WMI_CMD_ACL_DELMAC_SEC,
+     WMI_CMD_WIFI_GET_PROFILE,
+     WMI_CMD_PHYERR,
+     WMI_CMD_VAP_VENDOR_PARAM_SET, 
+diff --git a/target/linux/thin_driver/atd/atd_cfg.c b/target/linux/thin_driver/atd/atd_cfg.c
+index 68dfd45..862a3ae 100644
+--- a/target/linux/thin_driver/atd/atd_cfg.c
++++ b/target/linux/thin_driver/atd/atd_cfg.c
+@@ -323,6 +323,8 @@ ATD_TGT_CMD_PROTOTYPE(atd_tgt_dbgreq);
+ ATD_TGT_CMD_PROTOTYPE(atd_tgt_send_mgmt);
+ ATD_TGT_CMD_PROTOTYPE(atd_tgt_acl_addmac);
+ ATD_TGT_CMD_PROTOTYPE(atd_tgt_acl_delmac);
++ATD_TGT_CMD_PROTOTYPE(atd_tgt_acl_addmac_sec);
++ATD_TGT_CMD_PROTOTYPE(atd_tgt_acl_delmac_sec);
+ ATD_TGT_CMD_PROTOTYPE(atd_tgt_get_profile);
+ ATD_TGT_CMD_PROTOTYPE(atd_tgt_phyerr);
+ ATD_TGT_CMD_PROTOTYPE(atd_tgt_set_vap_vendor_param);
+@@ -424,6 +426,8 @@ wmi_dispatch_entry_t  wmidispatchentry[] =
+     { atd_tgt_send_mgmt,            WMI_CMD_SEND_MGMT         , 0 },
+     { atd_tgt_acl_addmac,           WMI_CMD_ACL_ADDMAC           , 0 },
+     { atd_tgt_acl_delmac,           WMI_CMD_ACL_DELMAC           , 0 },
++    { atd_tgt_acl_addmac_sec,       WMI_CMD_ACL_ADDMAC_SEC    , 0 },
++    { atd_tgt_acl_delmac_sec,       WMI_CMD_ACL_DELMAC_SEC    , 0 },
+     { atd_tgt_get_profile,          WMI_CMD_WIFI_GET_PROFILE           , 0 },
+     { atd_tgt_phyerr,               WMI_CMD_PHYERR            , 0 },
+     { atd_tgt_set_vap_vendor_param, WMI_CMD_VAP_VENDOR_PARAM_SET, 0},
+@@ -8656,6 +8660,111 @@ fail:
+     wmi_cmd_rsp(atsc->wmi_handle, cmdid, status, NULL, 0);
+ }
+ 
++void
++atd_tgt_acl_addmac_sec(void *ctx, a_uint16_t cmdid,
++                  a_uint8_t *buffer, a_int32_t len)
++{
++    a_status_t status = A_STATUS_OK;
++    atd_tgt_dev_t *atsc = (atd_tgt_dev_t *)ctx;
++    atd_tgt_wifi_t *wifisc = NULL;
++    atd_tgt_vap_t  *vap = NULL;
++    atd_hdr_t *atdhdr;
++    atd_macaddr_t *mac;
++    struct iw_request_info info;
++    union  iwreq_data iwreqdata;
++    struct sockaddr sa;
++
++    atd_trace(ATD_DEBUG_FUNCTRACE, ("cmd %d    ", \
++                cmdid));
++
++    atd_assert(len >= (sizeof(atd_hdr_t) + sizeof(acfg_macaddr_t)));
++
++    atdhdr     = (atd_hdr_t *)buffer;
++    wifisc = atsc->wifi_list[atdhdr->wifi_index];
++
++    if(wifisc == NULL){
++        status = A_STATUS_ENXIO;
++        goto fail;
++    }
++    vap    = wifisc->vap_list[atdhdr->vap_index];
++    if(vap == NULL) {
++        status = A_STATUS_ENXIO;
++        goto fail;
++    }
++    mac = (atd_macaddr_t  *) (buffer + sizeof(atd_hdr_t)) ;
++    memcpy(sa.sa_data, mac->addr, ACFG_MACADDR_LEN);
++    info.cmd = IEEE80211_IOCTL_GET_MACADDR ;
++    info.flags = 0;
++    iwreqdata.data.length = ACFG_MACADDR_LEN;
++    iwreqdata.data.flags = IEEE80211_PARAM_ADD_MAC_LIST_SEC ;
++    iwreqdata.data.pointer = &sa;
++        status = netdev_wext_handler(vap->vap_netdev, \
++                                 IEEE80211_IOCTL_GET_MACADDR,
++                                 &info,
++                                 (void *)&iwreqdata,
++                                 (char *)&sa);
++
++        if(status != A_STATUS_OK){
++        atd_trace(ATD_DEBUG_CFG, ("ssid set erro \n"));
++    }
++
++fail:
++    wmi_cmd_rsp(atsc->wmi_handle, cmdid, status, NULL, 0);
++}
++
++
++void
++atd_tgt_acl_delmac_sec(void *ctx, a_uint16_t cmdid,
++                  a_uint8_t *buffer, a_int32_t len)
++{
++    a_status_t status = A_STATUS_OK;
++    atd_tgt_dev_t *atsc = (atd_tgt_dev_t *)ctx;
++    atd_tgt_wifi_t *wifisc = NULL;
++    atd_tgt_vap_t  *vap = NULL;
++    atd_hdr_t *atdhdr;
++    atd_macaddr_t *mac;
++    struct iw_request_info info;
++    union  iwreq_data iwreqdata;
++    struct sockaddr sa;
++
++
++    atd_trace(ATD_DEBUG_FUNCTRACE, ("cmd %d    ", \
++                cmdid));
++
++    atd_assert(len >= (sizeof(atd_hdr_t) + sizeof(acfg_macaddr_t)));
++
++    atdhdr     = (atd_hdr_t *)buffer;
++    wifisc = atsc->wifi_list[atdhdr->wifi_index];
++
++    if(wifisc == NULL){
++        status = A_STATUS_ENXIO;
++        goto fail;
++    }
++    vap    = wifisc->vap_list[atdhdr->vap_index];
++    if(vap == NULL) {
++        status = A_STATUS_ENXIO;
++        goto fail;
++    }
++    mac    = (atd_macaddr_t  *) (buffer + sizeof(atd_hdr_t)) ;
++    memcpy(sa.sa_data, mac->addr, ACFG_MACADDR_LEN);
++    info.cmd = IEEE80211_IOCTL_GET_MACADDR ;
++    info.flags = 0;
++    iwreqdata.data.length = ACFG_MACADDR_LEN;
++    iwreqdata.data.flags = IEEE80211_PARAM_DEL_MAC_LIST_SEC ;
++    status = netdev_wext_handler(vap->vap_netdev, \
++                                 IEEE80211_IOCTL_GET_MACADDR,
++                                 &info,
++                                 (void *)&iwreqdata,
++                                 (char *)&sa);
++
++        if(status != A_STATUS_OK){
++        atd_trace(ATD_DEBUG_CFG, ("ssid set erro \n"));
++    }
++
++fail:
++    wmi_cmd_rsp(atsc->wmi_handle, cmdid, status, NULL, 0);
++}
++
+ void 
+ atd_tgt_convert_profile(struct ieee80211_profile *profile,
+ 						atd_radio_vap_info_t *atd_profile)
+-- 
+2.8.0.rc3
+

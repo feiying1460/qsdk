@@ -1,0 +1,186 @@
+--- a/net/mac80211/Kconfig
++++ b/net/mac80211/Kconfig
+@@ -17,6 +17,13 @@ comment "CFG80211 needs to be enabled fo
+ 
+ if MAC80211 != n
+ 
++config MAC80211_NSS_SUPPORT
++       bool "Enable NSS support for IPQ platform"
++       default n
++       ---help---
++         This option enables support for NSS in boards
++	 like AP148.
++
+ config MAC80211_HAS_RC
+ 	bool
+ 
+--- a/net/mac80211/ieee80211_i.h
++++ b/net/mac80211/ieee80211_i.h
+@@ -37,6 +37,10 @@
+ 
+ extern const struct cfg80211_ops mac80211_config_ops;
+ 
++#ifdef CPTCFG_MAC80211_NSS_SUPPORT
++#include <nss_api_if.h>
++#endif
++
+ struct ieee80211_local;
+ 
+ /* Maximum number of broadcast/multicast frames to buffer when some of the
+@@ -959,6 +963,10 @@ struct ieee80211_sub_if_data {
+ 	} debugfs;
+ #endif
+ 
++#ifdef CPTCFG_MAC80211_NSS_SUPPORT
++	void *nssctx;
++#endif
++
+ 	/* must be last, dynamically sized area in this! */
+ 	struct ieee80211_vif vif;
+ };
+--- a/net/mac80211/iface.c
++++ b/net/mac80211/iface.c
+@@ -16,6 +16,7 @@
+ #include <linux/if_arp.h>
+ #include <linux/netdevice.h>
+ #include <linux/rtnetlink.h>
++#include <linux/module.h>
+ #include <net/mac80211.h>
+ #include <net/ieee80211_radiotap.h>
+ #include "ieee80211_i.h"
+@@ -27,6 +28,10 @@
+ #include "wme.h"
+ #include "rate.h"
+ 
++bool is_nss_enable = true;
++module_param(is_nss_enable, bool, 0644);
++MODULE_PARM_DESC(is_nss_enable, "NSS enable module param");
++
+ /**
+  * DOC: Interface list locking
+  *
+@@ -716,6 +721,17 @@ int ieee80211_do_open(struct wireless_de
+ 
+ 	ieee80211_recalc_ps(local);
+ 
++#ifdef CPTCFG_MAC80211_NSS_SUPPORT
++	if (is_nss_enable) {
++		sdata->nssctx = nss_create_virt_if(dev);
++		if (sdata->nssctx)
++			sdata_info(sdata, "Created a NSS virtual interface\n");
++		else
++			sdata_err(sdata, "Failed to create a NSS virtual interface\n");
++	} else {
++		sdata->nssctx = NULL;
++	}
++#endif
+ 	if (sdata->vif.type == NL80211_IFTYPE_MONITOR ||
+ 	    sdata->vif.type == NL80211_IFTYPE_AP_VLAN) {
+ 		/* XXX: for AP_VLAN, actually track AP queues */
+@@ -1060,6 +1076,12 @@ static int ieee80211_stop(struct net_dev
+ {
+ 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
+ 
++#ifdef CPTCFG_MAC80211_NSS_SUPPORT
++	if (sdata->nssctx) {
++		nss_destroy_virt_if(sdata->nssctx);
++		sdata_info(sdata, "Destroyed NSS virtual interface\n");
++	}
++#endif
+ 	ieee80211_do_stop(sdata, true);
+ 
+ 	return 0;
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -89,6 +89,49 @@ static u8 *ieee80211_get_bssid(struct ie
+ 	return NULL;
+ }
+ 
++#ifdef CPTCFG_MAC80211_NSS_SUPPORT
++
++#define case_rtn_string(val) case val: return #val
++
++static const char *nss_tx_status_str(nss_tx_status_t status)
++{
++	switch (status) {
++		case_rtn_string(NSS_TX_SUCCESS);
++		case_rtn_string(NSS_TX_FAILURE);
++		case_rtn_string(NSS_TX_FAILURE_QUEUE);
++		case_rtn_string(NSS_TX_FAILURE_NOT_READY);
++		case_rtn_string(NSS_TX_FAILURE_TOO_LARGE);
++		case_rtn_string(NSS_TX_FAILURE_TOO_SHORT);
++		case_rtn_string(NSS_TX_FAILURE_NOT_SUPPORTED);
++		case_rtn_string(NSS_TX_FAILURE_BAD_PARAM);
++	default:
++		return "Unknown NSS TX status";
++	}
++}
++
++static void netif_rx_nss(struct ieee80211_sub_if_data *sdata,
++			 struct sk_buff *skb)
++{
++	int ret;
++
++	if (!sdata->nssctx)
++		goto out;
++
++	ret = nss_tx_virt_if_rxbuf(sdata->nssctx, skb);
++	if (ret) {
++		if (net_ratelimit()) {
++			sdata_err(sdata, "NSS TX failed with error: %s\n",
++				  nss_tx_status_str(ret));
++		}
++		goto out;
++	}
++
++	return;
++out:
++	netif_receive_skb(skb);
++}
++#endif
++
+ /*
+  * monitor mode reception
+  *
+@@ -2239,8 +2282,14 @@ ieee80211_deliver_skb(struct ieee80211_r
+ 		}
+ 	}
+ 
+-#ifndef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
+-	if (skb) {
++#if !defined(CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS) || defined(CPTCFG_MAC80211_NSS_SUPPORT)
++	if (skb
++#if CPTCFG_MAC80211_NSS_SUPPORT
++	    && sdata->nssctx)
++#else
++	    )
++#endif
++	{
+ 		/* 'align' will only take the values 0 or 2 here since all
+ 		 * frames are required to be aligned to 2-byte boundaries
+ 		 * when being passed to mac80211; the code here works just
+@@ -2271,8 +2320,13 @@ ieee80211_deliver_skb(struct ieee80211_r
+ 		memset(skb->cb, 0, sizeof(skb->cb));
+ 		if (rx->napi)
+ 			napi_gro_receive(rx->napi, skb);
+-		else
++		else {
++#ifdef CPTCFG_MAC80211_NSS_SUPPORT
++			netif_rx_nss(sdata, skb);
++#else
+ 			netif_receive_skb(skb);
++#endif
++		}
+ 	}
+ 
+ 	if (xmit_skb) {
+--- a/.local-symbols
++++ b/.local-symbols
+@@ -42,6 +42,7 @@ LIB80211_CRYPT_CCMP=
+ LIB80211_CRYPT_TKIP=
+ LIB80211_DEBUG=
+ MAC80211=
++MAC80211_NSS_SUPPORT=
+ MAC80211_HAS_RC=
+ MAC80211_RC_MINSTREL=
+ MAC80211_RC_MINSTREL_HT=

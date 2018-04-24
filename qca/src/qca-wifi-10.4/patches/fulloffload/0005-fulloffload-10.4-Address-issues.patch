@@ -1,0 +1,466 @@
+From 232a6514ac63a7af6f7baa04aa31603908bdfdc7 Mon Sep 17 00:00:00 2001
+From: Venkata krishna Sundararajan <vsundara@qti.qualcomm.com>
+Date: Tue, 6 Dec 2016 12:19:32 +0530
+Subject: [PATCH] [fulloffload-10.4] Address issues.
+
+Addresses the issues that includes:
+1. Uninitialized struct variables.
+2. Array out of bound check.
+3. Validating null pointer dereference.
+
+Change-Id: Id745b4f928f9a14eabb16de9c348ac8470db05a1
+Signed-off-by: Venkata krishna Sundararajan <vsundara@qti.qualcomm.com>
+---
+ host/thin_driver/atd/atd_cfg.c         | 85 ++++++++++++++++++----------------
+ host/thin_driver/atd/atd_dev.c         |  5 +-
+ target/linux/thin_driver/atd/atd_cfg.c | 12 +++--
+ 3 files changed, 57 insertions(+), 45 deletions(-)
+
+diff --git a/host/thin_driver/atd/atd_cfg.c b/host/thin_driver/atd/atd_cfg.c
+index 0f8eee5..34f865f 100644
+--- a/host/thin_driver/atd/atd_cfg.c
++++ b/host/thin_driver/atd/atd_cfg.c
+@@ -481,8 +481,8 @@ atd_cfg_create_vap(adf_drv_handle_t       hdl,
+     adf_net_dev_info_t       info  = {{0}};
+     adf_dev_sw_t             dev_switch = {0};
+     atd_host_vap_t          *vap = NULL;
+-    atd_vap_create_cmd_t    *cmd ;
+-    atd_vap_create_rsp_t     resp ;
++    atd_vap_create_cmd_t    *cmd;
++    atd_vap_create_rsp_t     resp = {0};
+     wmi_handle_t             wmih =  __wifi2wmi(sc);
+     wmi_handle_t             htch =  __wifi2htc(sc);
+     a_uint32_t               len, unit, error,  status  = A_STATUS_OK;
+@@ -824,7 +824,7 @@ atd_cfg_get_testmode(adf_drv_handle_t hdl, acfg_testmode_t  *testmode)
+ {
+     atd_host_vap_t     *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t *wifi   = vap->wifisc;
+-    atd_testmode_t         *pld, result;
++    atd_testmode_t         *pld = NULL, result = {{0}};
+     a_status_t          status = A_STATUS_OK;
+     adf_nbuf_t          nbuf;
+ 
+@@ -982,7 +982,7 @@ atd_cfg_get_vap_param(adf_drv_handle_t hdl, a_uint32_t param, a_uint32_t *value)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     atd_param_t       *vap_param;
+-    atd_param_t        paramresult;
++    atd_param_t        paramresult = {0};
+ 
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("param  %d ",param ));
+@@ -1059,7 +1059,7 @@ atd_cfg_get_vap_vendor_param(adf_drv_handle_t hdl, acfg_vendor_param_req_t *req)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     atd_vendor_param_t       *vendor_param;
+-    atd_vendor_param_t        paramresult;
++    atd_vendor_param_t        paramresult = {0};
+ 
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("param  %d ", req->param ));
+@@ -1139,7 +1139,7 @@ atd_cfg_get_wifi_param(adf_drv_handle_t hdl, a_uint32_t param,
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     atd_param_t       *wifi_param;
+-    atd_param_t        paramresult;
++    atd_param_t        paramresult = {0};
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) +  sizeof(atd_param_t);
+ 
+@@ -1183,7 +1183,7 @@ atd_cfg_set_opmode(adf_drv_handle_t hdl, acfg_opmode_t mode)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     acfg_opmode_t     *pmode;
+ 
+@@ -1371,7 +1371,7 @@ atd_cfg_set_ap(adf_drv_handle_t  hdl, acfg_macaddr_t *mac)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t    *pmac;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -1446,7 +1446,7 @@ atd_cfg_set_rate(adf_drv_handle_t hdl, acfg_rate_t *rate)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t     *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     atd_rate_t        *prate;
+ 
+@@ -1525,7 +1525,7 @@ atd_cfg_set_powmgmt(adf_drv_handle_t  hdl, acfg_powmgmt_t *pm)
+     a_status_t status = A_STATUS_OK;
+     adf_nbuf_t nbuf;
+     atd_powmgmt_t *mgmt;
+-    a_int32_t resp;
++    a_int32_t resp = 0;
+ 
+     atd_trace( (ATD_DEBUG_FUNCTRACE|ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -1567,7 +1567,7 @@ atd_cfg_get_powmgmt(adf_drv_handle_t hdl, acfg_powmgmt_t *pm)
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+-    atd_powmgmt_t      powmgmt;
++    atd_powmgmt_t      powmgmt = {0};
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE|ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -2398,7 +2398,7 @@ atd_cfg_get_range(adf_drv_handle_t hdl, acfg_range_t *range)
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+-    atd_range_buf_t    range_buf;
++    atd_range_buf_t    range_buf = {0};
+     acfg_range_buf_t  *tmp = (acfg_range_buf_t *)range->buff;
+     a_uint32_t         i;
+ 
+@@ -4091,15 +4091,15 @@ atd_event_run(struct atd_host_dev *dev_sc, wmi_id_t   event,
+ 
+     wifi = dev_sc->wifi_list[hdr->wifi_index];
+ 
+-    if (hdr->vap_index < 0xFF)
++    if (hdr->vap_index < MAX_VAP_SUPPORTED)
+         vap = wifi->vap_list[hdr->vap_index];
+ 
+-    adf_os_assert(event < max_event_num);
++    adf_os_assert(event < max_event_num && event >= WMI_EVENT_START);
+ 
+     if ((event == WMI_EVENT_CREATE_VAP) && (vap != NULL))
+         event = WMI_EVENT_START;
+ 
+-    if (event > max_event_num) event = WMI_EVENT_START;
++    if (event >= max_event_num) event = WMI_EVENT_START;
+ 
+     atd_events[EVENT_NUM(event)](wifi, vap, event, buf);
+ 
+@@ -5357,6 +5357,11 @@ atd_event_proxyarp_send(atd_host_wifi_t    *wifi, atd_host_vap_t   *vap,
+     data += sizeof(a_uint16_t);
+ 
+     nbuf = adf_nbuf_alloc(NULL, wbuf_len, 0, 0, 0);
++    if (nbuf == NULL) {
++      atd_trace(ATD_DEBUG_CFG, ("Unable to allocate wmi buffer \n"));
++      adf_os_assert(nbuf);
++    }
++
+     nbuf_hdr = (a_uint8_t *)adf_nbuf_put_tail(nbuf, wbuf_len);
+     adf_os_mem_copy(nbuf_hdr, data, wbuf_len);
+     nbuf->len = wbuf_len;
+@@ -5575,7 +5580,7 @@ atd_cfg_set_chan(adf_drv_handle_t hdl, a_uint8_t  chan)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     acfg_freq_t       *pfreq;
+ 
+@@ -5641,7 +5646,7 @@ atd_cfg_get_chan(adf_drv_handle_t hdl, a_uint8_t *chan)
+     atd_host_vap_t *vap = (atd_host_vap_t *)hdl;
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+-    acfg_freq_t resp;
++    acfg_freq_t resp = {0};
+     a_uint32_t freq;
+     adf_nbuf_t nbuf;
+ 
+@@ -5684,7 +5689,7 @@ atd_cfg_set_freq(adf_drv_handle_t hdl, acfg_freq_t *freq)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     acfg_freq_t       *pfreq;
+ 
+@@ -5726,7 +5731,7 @@ atd_cfg_get_freq(adf_drv_handle_t  hdl, acfg_freq_t *freq)
+     atd_host_vap_t *vap = (atd_host_vap_t *)hdl;
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+-    acfg_freq_t resp;
++    acfg_freq_t resp = {0};
+     adf_nbuf_t nbuf;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+@@ -5765,7 +5770,7 @@ atd_cfg_set_rts(adf_drv_handle_t hdl, acfg_rts_t *rts)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     atd_rts_t         *prts;
+ 
+@@ -5809,7 +5814,7 @@ atd_cfg_get_rts(adf_drv_handle_t  hdl, acfg_rts_t *rts)
+     atd_host_vap_t *vap = (atd_host_vap_t *)hdl;
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+-    atd_rts_t resp;
++    atd_rts_t resp = {0};
+     adf_nbuf_t nbuf;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+@@ -5846,7 +5851,7 @@ atd_cfg_set_frag(adf_drv_handle_t hdl, acfg_frag_t *frag)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     atd_frag_t        *pfrag;
+ 
+@@ -5890,7 +5895,7 @@ atd_cfg_get_frag(adf_drv_handle_t  hdl, acfg_frag_t *frag)
+     atd_host_vap_t *vap = (atd_host_vap_t *)hdl;
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+-    atd_frag_t resp;
++    atd_frag_t resp = {0};
+     adf_nbuf_t nbuf;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+@@ -5929,7 +5934,7 @@ atd_cfg_set_txpow(adf_drv_handle_t hdl, acfg_txpow_t *txpow)
+     atd_host_vap_t    *vap    = (atd_host_vap_t * )hdl;
+     atd_host_wifi_t   *wifi   = vap->wifisc;
+     a_status_t         status = A_STATUS_OK;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     adf_nbuf_t         nbuf;
+     atd_txpow_t       *ptxpow;
+ 
+@@ -5974,7 +5979,7 @@ atd_cfg_get_txpow(adf_drv_handle_t  hdl, acfg_txpow_t *txpow)
+     atd_host_vap_t *vap = (atd_host_vap_t *)hdl;
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+-    atd_txpow_t resp;
++    atd_txpow_t resp = {0};
+     adf_nbuf_t nbuf;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+@@ -6013,7 +6018,7 @@ atd_cfg_set_encode(adf_drv_handle_t  hdl, acfg_encode_t *encode)
+     a_status_t status = A_STATUS_OK;
+     adf_nbuf_t nbuf;
+     atd_encode_rsp_t *pkey;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+     if ((nbuf = _atd_wmi_msg_alloc(__wifi2wmi(wifi))) == NULL) {
+@@ -6059,7 +6064,7 @@ atd_cfg_get_encode(adf_drv_handle_t  hdl, acfg_encode_t *encode)
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+     adf_nbuf_t nbuf;
+-    atd_encode_rsp_t key;
++    atd_encode_rsp_t key = {0};
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -6099,7 +6104,7 @@ atd_cfg_get_stats(adf_drv_handle_t  hdl, acfg_stats_t *stat)
+     atd_host_wifi_t *wifi = vap->wifisc;
+     a_status_t status = A_STATUS_OK;
+     adf_nbuf_t nbuf;
+-    atd_stats_t resp;
++    atd_stats_t resp = {0};
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -6177,7 +6182,7 @@ atd_cfg_get_reg(adf_drv_handle_t hdl, a_uint32_t offset, a_uint32_t *value)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     atd_param_t       *wifi_param;
+-    atd_param_t        paramresult;
++    atd_param_t        paramresult = {0};
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) +  sizeof(atd_param_t);
+ 
+@@ -6219,7 +6224,7 @@ atd_cfg_set_hwaddr(adf_drv_handle_t hdl, acfg_macaddr_t *mac)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t    *pmac;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) + sizeof(acfg_macaddr_t);
+ 
+@@ -6295,7 +6300,7 @@ atd_cfg_get_vap_wmmparams(adf_drv_handle_t hdl, a_uint32_t *param, a_uint32_t *v
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     atd_wmmparams_t    *vap_param;
+-    atd_param_t        paramresult;
++    atd_param_t        paramresult = {0};
+ 
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("param = %d",*(a_uint32_t *)param ));
+@@ -6422,7 +6427,7 @@ atd_cfg_doth_chsw(adf_drv_handle_t hdl, acfg_doth_chsw_t *chsw)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     acfg_doth_chsw_t   *pchsw;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) + sizeof(acfg_doth_chsw_t);
+ 
+@@ -6477,7 +6482,7 @@ atd_cfg_addmac(adf_drv_handle_t hdl, acfg_macaddr_t *addr)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t   *paddr;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) + sizeof(acfg_macaddr_t);
+ 
+@@ -6532,7 +6537,7 @@ atd_cfg_delmac(adf_drv_handle_t hdl, acfg_macaddr_t *addr)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t   *paddr;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) + sizeof(acfg_macaddr_t);
+ 
+@@ -6587,7 +6592,7 @@ atd_cfg_kickmac(adf_drv_handle_t hdl, acfg_macaddr_t *addr)
+     a_status_t         status = A_STATUS_OK;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t   *paddr;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t) + sizeof(acfg_macaddr_t);
+ 
+@@ -6754,12 +6759,12 @@ atd_cfg_get_mac_address(adf_drv_handle_t hdl, acfg_macacl_t *mac_addr_list)
+     a_status_t          status = A_STATUS_OK;
+     adf_nbuf_t          nbuf;
+     a_uint32_t          *buf;
+-    atd_macacl_t        mac_addr_list_resp;
++    atd_macacl_t        mac_addr_list_resp = {0};
+     a_uint8_t           i;
+ 
+     if ((nbuf = _atd_wmi_msg_alloc(__wifi2wmi(wifi))) == NULL) {
+         atd_trace(ATD_DEBUG_CFG, ("Unable to allocate wmi buffer \n"));
+-        status = A_STATUS_ENOMEM;
++        return A_STATUS_ENOMEM;
+     }
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG),
+@@ -6870,7 +6875,7 @@ atd_cfg_acl_setmac(adf_drv_handle_t hdl, acfg_macaddr_t *mac, a_uint8_t add)
+     atd_host_wifi_t   *wifi = vap->wifisc;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t    *pmac;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -6917,7 +6922,7 @@ atd_cfg_acl_setmac_sec(adf_drv_handle_t hdl, acfg_macaddr_t *mac, a_uint8_t add)
+     atd_host_wifi_t   *wifi = vap->wifisc;
+     adf_nbuf_t         nbuf;
+     acfg_macaddr_t    *pmac;
+-    a_int32_t          resp;
++    a_int32_t          resp = 0;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("Start"));
+ 
+@@ -6965,7 +6970,7 @@ atd_cfg_get_profile(adf_drv_handle_t       hdl, acfg_radio_vap_info_t *profile)
+     adf_nbuf_t         nbuf;
+     atd_hdr_t         *hdrp;
+     a_uint32_t         len = sizeof(atd_hdr_t);
+-    atd_radio_vap_info_t profile_result;
++    atd_radio_vap_info_t profile_result = {{0}};
+     a_uint8_t          i;
+ 
+     atd_trace((ATD_DEBUG_FUNCTRACE | ATD_DEBUG_CFG), ("get profile"));
+diff --git a/host/thin_driver/atd/atd_dev.c b/host/thin_driver/atd/atd_dev.c
+index 06267f60..15d1308 100644
+--- a/host/thin_driver/atd/atd_dev.c
++++ b/host/thin_driver/atd/atd_dev.c
+@@ -345,7 +345,7 @@ ath_device_htcready_worker(void *ctx)
+ 
+     atd_host_dev_t * dsc = (atd_host_dev_t *)ctx;
+     a_status_t status = A_STATUS_OK;
+-    atd_radio_query_resp_t  radiorsp;
++    atd_radio_query_resp_t  radiorsp = {{{0}}};
+     atd_host_wifi_t *wifi;
+     a_uint32_t i;
+ 
+@@ -1230,12 +1230,14 @@ atd_host_rx(void *instance, adf_nbuf_t nbuf, htc_endpointid_t ep )
+     if (adsc->wifi_list[rxhdr->wifi_index] == NULL) {
+         adf_os_print("Invalide radio index %d \n",rxhdr->wifi_index);
+         adf_nbuf_free(nbuf);
++        atd_spin_unlock(adsc);    /* Unlock */
+         return;
+     }
+     wifi = adsc->wifi_list[rxhdr->wifi_index];
+     if (rxhdr->vap_index >= MAX_VAP_SUPPORTED) {
+         adf_os_print(" Invalid Vap Index %d \n", rxhdr->vap_index);
+         adf_nbuf_free(nbuf);
++        atd_spin_unlock(adsc);    /* Unlock */
+         return;
+     }
+ 
+@@ -1244,6 +1246,7 @@ atd_host_rx(void *instance, adf_nbuf_t nbuf, htc_endpointid_t ep )
+         adf_os_print("Vap not found radio index %d vap index %d \n",
+                      rxhdr->wifi_index,rxhdr->vap_index);
+         adf_nbuf_free(nbuf);
++        atd_spin_unlock(adsc);    /* Unlock */
+         return;
+ 
+     }
+diff --git a/target/linux/thin_driver/atd/atd_cfg.c b/target/linux/thin_driver/atd/atd_cfg.c
+index dd5a6e5..8692544 100644
+--- a/target/linux/thin_driver/atd/atd_cfg.c
++++ b/target/linux/thin_driver/atd/atd_cfg.c
+@@ -200,7 +200,12 @@ atd_tgt_acfg2ieee(a_uint16_t param)
+         case ACFG_PARAM_ENABLE_RTSCTS:
+             value = IEEE80211_PARAM_ENABLE_RTSCTS;
+             break;
+-
++        case ACFG_PARAM_MACCMD:
++            value = IEEE80211_PARAM_MACCMD;
++            break;
++        case ACFG_PARAM_MACCMD_SEC:
++            value = IEEE80211_PARAM_MACCMD_SEC;
++            break;
+         default:
+             value = param;
+             break;
+@@ -1063,7 +1068,6 @@ atd_tgt_get_rssi(void *ctx, a_uint16_t cmdid,
+ 
+     atd_hdr_t   *atdhdr;
+     atd_vendor_t  *vendor;
+-    atd_rssi_t  *rssi;
+ 
+     atd_trace(ATD_DEBUG_FUNCTRACE,(" cmd %d ", \
+                 cmdid));
+@@ -1127,7 +1131,6 @@ atd_tgt_get_custdata(void *ctx, a_uint16_t cmdid,
+ 
+     atd_hdr_t   *atdhdr;
+     atd_vendor_t  *vendor;
+-    atd_custdata_t  *custdata;
+ 
+     atd_trace(ATD_DEBUG_FUNCTRACE,(" cmd %d ", \
+                 cmdid));
+@@ -7355,7 +7358,7 @@ atd_tgt_nawds_config(void *ctx, a_uint16_t cmdid,
+     atd_tgt_vap_t  *vap;
+     atd_hdr_t   *atdhdr;
+     struct iwreq req;
+-    atd_nawds_cfg_t  *nawds_config, resp = {0};
++    atd_nawds_cfg_t  *nawds_config;
+     struct ieee80211_wlanconfig nawds;
+ 
+     atd_trace(ATD_DEBUG_FUNCTRACE, ("cmd %d    ", \
+@@ -8482,6 +8485,7 @@ atd_tgt_acl_delmac_sec(void *ctx, a_uint16_t cmdid,
+     info.flags = 0;
+     iwreqdata.data.length = ACFG_MACADDR_LEN;
+     iwreqdata.data.flags = IEEE80211_PARAM_DEL_MAC_LIST_SEC ;
++    iwreqdata.data.pointer = &sa;
+     status = netdev_wext_handler(vap->vap_netdev, \
+                                  IEEE80211_IOCTL_GET_MACADDR,
+                                  &info,
+-- 
+2.1.4
+

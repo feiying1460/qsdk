@@ -1,0 +1,990 @@
+--- a/net/wireless/nl80211.c
++++ b/net/wireless/nl80211.c
+@@ -2534,8 +2534,7 @@ static int nl80211_send_iface(struct sk_
+ 
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_IFTYPE, wdev->iftype) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD) ||
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)) ||
+ 	    nla_put(msg, NL80211_ATTR_MAC, ETH_ALEN, wdev_address(wdev)) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_GENERATION,
+ 			rdev->devlist_generation ^
+@@ -4206,8 +4205,8 @@ static int nl80211_send_station(struct s
+ 	} while (0)
+ #define PUT_SINFO_U64(attr, memb) do {					\
+ 	if (sinfo->filled & (1ULL << NL80211_STA_INFO_ ## attr) &&	\
+-	    nla_put_u64_64bit(msg, NL80211_STA_INFO_ ## attr,		\
+-			      sinfo->memb, NL80211_STA_INFO_PAD))	\
++	    nla_put_u64(msg, NL80211_STA_INFO_ ## attr,		\
++			      sinfo->memb))	\
+ 		goto nla_put_failure;					\
+ 	} while (0)
+ 
+@@ -4330,8 +4329,8 @@ static int nl80211_send_station(struct s
+ 
+ #define PUT_TIDVAL_U64(attr, memb) do {					\
+ 	if (tidstats->filled & BIT(NL80211_TID_STATS_ ## attr) &&	\
+-	    nla_put_u64_64bit(msg, NL80211_TID_STATS_ ## attr,		\
+-			      tidstats->memb, NL80211_TID_STATS_PAD))	\
++	    nla_put_u64(msg, NL80211_TID_STATS_ ## attr,		\
++			      tidstats->memb))	\
+ 		goto nla_put_failure;					\
+ 	} while (0)
+ 
+@@ -7428,8 +7427,7 @@ static int nl80211_send_bss(struct sk_bu
+ 	if (wdev->netdev &&
+ 	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, wdev->netdev->ifindex))
+ 		goto nla_put_failure;
+-	if (nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	if (nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto nla_put_failure;
+ 
+ 	bss = nla_nest_start(msg, NL80211_ATTR_BSS);
+@@ -7450,8 +7448,7 @@ static int nl80211_send_bss(struct sk_bu
+ 	 */
+ 	ies = rcu_dereference(res->ies);
+ 	if (ies) {
+-		if (nla_put_u64_64bit(msg, NL80211_BSS_TSF, ies->tsf,
+-				      NL80211_BSS_PAD))
++		if (nla_put_u64(msg, NL80211_BSS_TSF, ies->tsf))
+ 			goto fail_unlock_rcu;
+ 		if (ies->len && nla_put(msg, NL80211_BSS_INFORMATION_ELEMENTS,
+ 					ies->len, ies->data))
+@@ -7461,8 +7458,7 @@ static int nl80211_send_bss(struct sk_bu
+ 	/* and this pointer is always (unless driver didn't know) beacon data */
+ 	ies = rcu_dereference(res->beacon_ies);
+ 	if (ies && ies->from_beacon) {
+-		if (nla_put_u64_64bit(msg, NL80211_BSS_BEACON_TSF, ies->tsf,
+-				      NL80211_BSS_PAD))
++		if (nla_put_u64(msg, NL80211_BSS_BEACON_TSF, ies->tsf))
+ 			goto fail_unlock_rcu;
+ 		if (ies->len && nla_put(msg, NL80211_BSS_BEACON_IES,
+ 					ies->len, ies->data))
+@@ -7481,15 +7477,13 @@ static int nl80211_send_bss(struct sk_bu
+ 		goto nla_put_failure;
+ 
+ 	if (intbss->parent_tsf &&
+-	    (nla_put_u64_64bit(msg, NL80211_BSS_PARENT_TSF,
+-			       intbss->parent_tsf, NL80211_BSS_PAD) ||
++	    (nla_put_u64(msg, NL80211_BSS_PARENT_TSF, intbss->parent_tsf) ||
+ 	     nla_put(msg, NL80211_BSS_PARENT_BSSID, ETH_ALEN,
+ 		     intbss->parent_bssid)))
+ 		goto nla_put_failure;
+ 
+ 	if (intbss->ts_boottime &&
+-	    nla_put_u64_64bit(msg, NL80211_BSS_LAST_SEEN_BOOTTIME,
+-			      intbss->ts_boottime, NL80211_BSS_PAD))
++	    nla_put_u64(msg, NL80211_BSS_LAST_SEEN_BOOTTIME, intbss->ts_boottime))
+ 		goto nla_put_failure;
+ 
+ 	switch (rdev->wiphy.signal_type) {
+@@ -7611,28 +7605,28 @@ static int nl80211_send_survey(struct sk
+ 	    nla_put_flag(msg, NL80211_SURVEY_INFO_IN_USE))
+ 		goto nla_put_failure;
+ 	if ((survey->filled & SURVEY_INFO_TIME) &&
+-	    nla_put_u64_64bit(msg, NL80211_SURVEY_INFO_TIME,
+-			survey->time, NL80211_SURVEY_INFO_PAD))
++	    nla_put_u64(msg, NL80211_SURVEY_INFO_TIME,
++			survey->time))
+ 		goto nla_put_failure;
+ 	if ((survey->filled & SURVEY_INFO_TIME_BUSY) &&
+-	    nla_put_u64_64bit(msg, NL80211_SURVEY_INFO_TIME_BUSY,
+-			      survey->time_busy, NL80211_SURVEY_INFO_PAD))
++	    nla_put_u64(msg, NL80211_SURVEY_INFO_TIME_BUSY,
++			      survey->time_busy))
+ 		goto nla_put_failure;
+ 	if ((survey->filled & SURVEY_INFO_TIME_EXT_BUSY) &&
+-	    nla_put_u64_64bit(msg, NL80211_SURVEY_INFO_TIME_EXT_BUSY,
+-			      survey->time_ext_busy, NL80211_SURVEY_INFO_PAD))
++	    nla_put_u64(msg, NL80211_SURVEY_INFO_TIME_EXT_BUSY,
++			      survey->time_ext_busy))
+ 		goto nla_put_failure;
+ 	if ((survey->filled & SURVEY_INFO_TIME_RX) &&
+-	    nla_put_u64_64bit(msg, NL80211_SURVEY_INFO_TIME_RX,
+-			      survey->time_rx, NL80211_SURVEY_INFO_PAD))
++	    nla_put_u64(msg, NL80211_SURVEY_INFO_TIME_RX,
++			      survey->time_rx))
+ 		goto nla_put_failure;
+ 	if ((survey->filled & SURVEY_INFO_TIME_TX) &&
+-	    nla_put_u64_64bit(msg, NL80211_SURVEY_INFO_TIME_TX,
+-			      survey->time_tx, NL80211_SURVEY_INFO_PAD))
++	    nla_put_u64(msg, NL80211_SURVEY_INFO_TIME_TX,
++			      survey->time_tx))
+ 		goto nla_put_failure;
+ 	if ((survey->filled & SURVEY_INFO_TIME_SCAN) &&
+-	    nla_put_u64_64bit(msg, NL80211_SURVEY_INFO_TIME_SCAN,
+-			      survey->time_scan, NL80211_SURVEY_INFO_PAD))
++	    nla_put_u64(msg, NL80211_SURVEY_INFO_TIME_SCAN,
++			      survey->time_scan))
+ 		goto nla_put_failure;
+ 
+ 	nla_nest_end(msg, infoattr);
+@@ -8355,8 +8349,7 @@ __cfg80211_alloc_vendor_skb(struct cfg80
+ 	}
+ 
+ 	if (wdev) {
+-		if (nla_put_u64_64bit(skb, NL80211_ATTR_WDEV,
+-				      wdev_id(wdev), NL80211_ATTR_PAD))
++		if (nla_put_u64(skb, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 			goto nla_put_failure;
+ 		if (wdev->netdev &&
+ 		    nla_put_u32(skb, NL80211_ATTR_IFINDEX,
+@@ -8951,8 +8944,7 @@ static int nl80211_remain_on_channel(str
+ 	if (err)
+ 		goto free_msg;
+ 
+-	if (nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-			      NL80211_ATTR_PAD))
++	if (nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie))
+ 		goto nla_put_failure;
+ 
+ 	genlmsg_end(msg, hdr);
+@@ -9150,8 +9142,7 @@ static int nl80211_tx_mgmt(struct sk_buf
+ 		goto free_msg;
+ 
+ 	if (msg) {
+-		if (nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-				      NL80211_ATTR_PAD))
++		if (nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie))
+ 			goto nla_put_failure;
+ 
+ 		genlmsg_end(msg, hdr);
+@@ -10462,8 +10453,7 @@ static int nl80211_probe_client(struct s
+ 	if (err)
+ 		goto free_msg;
+ 
+-	if (nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-			      NL80211_ATTR_PAD))
++	if (nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie))
+ 		goto nla_put_failure;
+ 
+ 	genlmsg_end(msg, hdr);
+@@ -10877,8 +10867,7 @@ out:
+ 	}
+ 
+ 	/* propagate the instance id and cookie to userspace  */
+-	if (nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, func->cookie,
+-			      NL80211_ATTR_PAD))
++	if (nla_put_u64(msg, NL80211_ATTR_COOKIE, func->cookie))
+ 		goto nla_put_failure;
+ 
+ 	func_attr = nla_nest_start(msg, NL80211_ATTR_NAN_FUNC);
+@@ -10985,12 +10974,10 @@ void cfg80211_nan_match(struct wireless_
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    (wdev->netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+ 					 wdev->netdev->ifindex)) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto nla_put_failure;
+ 
+-	if (nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, match->cookie,
+-			      NL80211_ATTR_PAD) ||
++	if (nla_put_u64(msg, NL80211_ATTR_COOKIE, match->cookie) ||
+ 	    nla_put(msg, NL80211_ATTR_MAC, ETH_ALEN, match->addr))
+ 		goto nla_put_failure;
+ 
+@@ -11065,12 +11052,10 @@ void cfg80211_nan_func_terminated(struct
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    (wdev->netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+ 					 wdev->netdev->ifindex)) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto nla_put_failure;
+ 
+-	if (nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-			      NL80211_ATTR_PAD))
++	if (nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie))
+ 		goto nla_put_failure;
+ 
+ 	func_attr = nla_nest_start(msg, NL80211_ATTR_NAN_FUNC);
+@@ -11431,9 +11416,8 @@ static int nl80211_vendor_cmd_dump(struc
+ 			break;
+ 
+ 		if (nla_put_u32(skb, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+-		    (wdev && nla_put_u64_64bit(skb, NL80211_ATTR_WDEV,
+-					       wdev_id(wdev),
+-					       NL80211_ATTR_PAD))) {
++		    (wdev && nla_put_u64(skb, NL80211_ATTR_WDEV,
++					       wdev_id(wdev)))) {
+ 			genlmsg_cancel(skb, hdr);
+ 			break;
+ 		}
+@@ -12690,8 +12674,8 @@ static int nl80211_add_scan_req(struct s
+ 		goto nla_put_failure;
+ 
+ 	if (req->info.scan_start_tsf &&
+-	    (nla_put_u64_64bit(msg, NL80211_ATTR_SCAN_START_TIME_TSF,
+-			       req->info.scan_start_tsf, NL80211_BSS_PAD) ||
++	    (nla_put_u64(msg, NL80211_ATTR_SCAN_START_TIME_TSF,
++			       req->info.scan_start_tsf) ||
+ 	     nla_put(msg, NL80211_ATTR_SCAN_START_TIME_TSF_BSSID, ETH_ALEN,
+ 		     req->info.tsf_bssid)))
+ 		goto nla_put_failure;
+@@ -12716,8 +12700,7 @@ static int nl80211_send_scan_msg(struct
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    (wdev->netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+ 					 wdev->netdev->ifindex)) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto nla_put_failure;
+ 
+ 	/* ignore errors and send incomplete event anyway */
+@@ -13384,13 +13367,11 @@ static void nl80211_send_remain_on_chan_
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    (wdev->netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+ 					 wdev->netdev->ifindex)) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD) ||
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_WIPHY_FREQ, chan->center_freq) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE,
+ 			NL80211_CHAN_NO_HT) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie))
+ 		goto nla_put_failure;
+ 
+ 	if (cmd == NL80211_CMD_REMAIN_ON_CHANNEL &&
+@@ -13624,8 +13605,7 @@ int nl80211_send_mgmt(struct cfg80211_re
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    (netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+ 					netdev->ifindex)) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD) ||
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_WIPHY_FREQ, freq) ||
+ 	    (sig_dbm &&
+ 	     nla_put_u32(msg, NL80211_ATTR_RX_SIGNAL_DBM, sig_dbm)) ||
+@@ -13668,11 +13648,9 @@ void cfg80211_mgmt_tx_status(struct wire
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    (netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+ 				   netdev->ifindex)) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD) ||
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)) ||
+ 	    nla_put(msg, NL80211_ATTR_FRAME, len, buf) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-			      NL80211_ATTR_PAD) ||
++	    nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie) ||
+ 	    (ack && nla_put_flag(msg, NL80211_ATTR_ACK)))
+ 		goto nla_put_failure;
+ 
+@@ -14052,8 +14030,7 @@ nl80211_radar_notify(struct cfg80211_reg
+ 		struct wireless_dev *wdev = netdev->ieee80211_ptr;
+ 
+ 		if (nla_put_u32(msg, NL80211_ATTR_IFINDEX, netdev->ifindex) ||
+-		    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-				      NL80211_ATTR_PAD))
++		    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 			goto nla_put_failure;
+ 	}
+ 
+@@ -14098,8 +14075,7 @@ void cfg80211_probe_status(struct net_de
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, dev->ifindex) ||
+ 	    nla_put(msg, NL80211_ATTR_MAC, ETH_ALEN, addr) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_COOKIE, cookie,
+-			      NL80211_ATTR_PAD) ||
++	    nla_put_u64(msg, NL80211_ATTR_COOKIE, cookie) ||
+ 	    (acked && nla_put_flag(msg, NL80211_ATTR_ACK)))
+ 		goto nla_put_failure;
+ 
+@@ -14244,8 +14220,7 @@ void cfg80211_report_wowlan_wakeup(struc
+ 		goto free_msg;
+ 
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto free_msg;
+ 
+ 	if (wdev->netdev && nla_put_u32(msg, NL80211_ATTR_IFINDEX,
+@@ -14521,8 +14496,7 @@ void cfg80211_crit_proto_stopped(struct
+ 		goto nla_put_failure;
+ 
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto nla_put_failure;
+ 
+ 	genlmsg_end(msg, hdr);
+@@ -14554,8 +14528,7 @@ void nl80211_send_ap_stopped(struct wire
+ 
+ 	if (nla_put_u32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx) ||
+ 	    nla_put_u32(msg, NL80211_ATTR_IFINDEX, wdev->netdev->ifindex) ||
+-	    nla_put_u64_64bit(msg, NL80211_ATTR_WDEV, wdev_id(wdev),
+-			      NL80211_ATTR_PAD))
++	    nla_put_u64(msg, NL80211_ATTR_WDEV, wdev_id(wdev)))
+ 		goto out;
+ 
+ 	genlmsg_end(msg, hdr);
+--- a/compat/crypto-skcipher.c
++++ b/compat/crypto-skcipher.c
+@@ -16,11 +16,7 @@
+ 
+ #include <crypto/internal/skcipher.h>
+ #include <linux/bug.h>
+-#include <linux/cryptouser.h>
+ #include <linux/module.h>
+-#include <linux/rtnetlink.h>
+-#include <linux/seq_file.h>
+-#include <net/netlink.h>
+ 
+ struct crypto_tfm *__crypto_alloc_tfm(struct crypto_alg *alg, u32 type,
+ 				      u32 mask);
+@@ -50,11 +46,10 @@ static unsigned int crypto_skcipher_exts
+ 	if (alg->cra_type == &crypto_blkcipher_type)
+ 		return sizeof(struct crypto_blkcipher *);
+ 
+-	if (alg->cra_type == &crypto_ablkcipher_type ||
+-	    alg->cra_type == &crypto_givcipher_type)
+-		return sizeof(struct crypto_ablkcipher *);
++	BUG_ON(alg->cra_type != &crypto_ablkcipher_type &&
++	       alg->cra_type != &crypto_givcipher_type);
+ 
+-	return crypto_alg_extsize(alg);
++	return sizeof(struct crypto_ablkcipher *);
+ }
+ 
+ static int skcipher_setkey_blkcipher(struct crypto_skcipher *tfm,
+@@ -242,118 +237,26 @@ static int crypto_init_skcipher_ops_ablk
+ 	return 0;
+ }
+ 
+-static void crypto_skcipher_exit_tfm(struct crypto_tfm *tfm)
+-{
+-	struct crypto_skcipher *skcipher = __crypto_skcipher_cast(tfm);
+-	struct skcipher_alg *alg = crypto_skcipher_alg(skcipher);
+-
+-	alg->exit(skcipher);
+-}
+-
+ static int crypto_skcipher_init_tfm(struct crypto_tfm *tfm)
+ {
+-	struct crypto_skcipher *skcipher = __crypto_skcipher_cast(tfm);
+-	struct skcipher_alg *alg = crypto_skcipher_alg(skcipher);
+-
+ 	if (tfm->__crt_alg->cra_type == &crypto_blkcipher_type)
+ 		return crypto_init_skcipher_ops_blkcipher(tfm);
+ 
+-	if (tfm->__crt_alg->cra_type == &crypto_ablkcipher_type ||
+-	    tfm->__crt_alg->cra_type == &crypto_givcipher_type)
+-		return crypto_init_skcipher_ops_ablkcipher(tfm);
+-
+-	skcipher->setkey = alg->setkey;
+-	skcipher->encrypt = alg->encrypt;
+-	skcipher->decrypt = alg->decrypt;
+-	skcipher->ivsize = alg->ivsize;
+-	skcipher->keysize = alg->max_keysize;
+-
+-	if (alg->exit)
+-		skcipher->base.exit = crypto_skcipher_exit_tfm;
+-
+-	if (alg->init)
+-		return alg->init(skcipher);
+-
+-	return 0;
+-}
+-
+-static void crypto_skcipher_free_instance(struct crypto_instance *inst)
+-{
+-	struct skcipher_instance *skcipher =
+-		container_of(inst, struct skcipher_instance, s.base);
+-
+-	skcipher->free(skcipher);
+-}
+-
+-static void crypto_skcipher_show(struct seq_file *m, struct crypto_alg *alg)
+-	__attribute__ ((unused));
+-static void crypto_skcipher_show(struct seq_file *m, struct crypto_alg *alg)
+-{
+-	struct skcipher_alg *skcipher = container_of(alg, struct skcipher_alg,
+-						     base);
++	BUG_ON(tfm->__crt_alg->cra_type != &crypto_ablkcipher_type &&
++	       tfm->__crt_alg->cra_type != &crypto_givcipher_type);
+ 
+-	seq_printf(m, "type         : skcipher\n");
+-	seq_printf(m, "async        : %s\n",
+-		   alg->cra_flags & CRYPTO_ALG_ASYNC ?  "yes" : "no");
+-	seq_printf(m, "blocksize    : %u\n", alg->cra_blocksize);
+-	seq_printf(m, "min keysize  : %u\n", skcipher->min_keysize);
+-	seq_printf(m, "max keysize  : %u\n", skcipher->max_keysize);
+-	seq_printf(m, "ivsize       : %u\n", skcipher->ivsize);
+-	seq_printf(m, "chunksize    : %u\n", skcipher->chunksize);
++	return crypto_init_skcipher_ops_ablkcipher(tfm);
+ }
+ 
+-#ifdef CONFIG_NET
+-static int crypto_skcipher_report(struct sk_buff *skb, struct crypto_alg *alg)
+-{
+-	struct crypto_report_blkcipher rblkcipher;
+-	struct skcipher_alg *skcipher = container_of(alg, struct skcipher_alg,
+-						     base);
+-
+-	strncpy(rblkcipher.type, "skcipher", sizeof(rblkcipher.type));
+-	strncpy(rblkcipher.geniv, "<none>", sizeof(rblkcipher.geniv));
+-
+-	rblkcipher.blocksize = alg->cra_blocksize;
+-	rblkcipher.min_keysize = skcipher->min_keysize;
+-	rblkcipher.max_keysize = skcipher->max_keysize;
+-	rblkcipher.ivsize = skcipher->ivsize;
+-
+-	if (nla_put(skb, CRYPTOCFGA_REPORT_BLKCIPHER,
+-		    sizeof(struct crypto_report_blkcipher), &rblkcipher))
+-		goto nla_put_failure;
+-	return 0;
+-
+-nla_put_failure:
+-	return -EMSGSIZE;
+-}
+-#else
+-static int crypto_skcipher_report(struct sk_buff *skb, struct crypto_alg *alg)
+-{
+-	return -ENOSYS;
+-}
+-#endif
+-
+ static const struct crypto_type crypto_skcipher_type2 = {
+ 	.extsize = crypto_skcipher_extsize,
+ 	.init_tfm = crypto_skcipher_init_tfm,
+-	.free = crypto_skcipher_free_instance,
+-#ifdef CONFIG_PROC_FS
+-	.show = crypto_skcipher_show,
+-#endif
+-	.report = crypto_skcipher_report,
+ 	.maskclear = ~CRYPTO_ALG_TYPE_MASK,
+ 	.maskset = CRYPTO_ALG_TYPE_BLKCIPHER_MASK,
+-	.type = CRYPTO_ALG_TYPE_SKCIPHER,
++	.type = CRYPTO_ALG_TYPE_BLKCIPHER,
+ 	.tfmsize = offsetof(struct crypto_skcipher, base),
+ };
+ 
+-int crypto_grab_skcipher(struct crypto_skcipher_spawn *spawn,
+-			  const char *name, u32 type, u32 mask)
+-{
+-	spawn->base.frontend = &crypto_skcipher_type2;
+-	return crypto_grab_spawn(&spawn->base, name, type, mask);
+-}
+-EXPORT_SYMBOL_GPL(crypto_grab_skcipher);
+-
+ struct crypto_skcipher *crypto_alloc_skcipher(const char *alg_name,
+ 					      u32 type, u32 mask)
+ {
+@@ -361,90 +264,5 @@ struct crypto_skcipher *crypto_alloc_skc
+ }
+ EXPORT_SYMBOL_GPL(crypto_alloc_skcipher);
+ 
+-int crypto_has_skcipher2(const char *alg_name, u32 type, u32 mask)
+-{
+-	return crypto_type_has_alg(alg_name, &crypto_skcipher_type2,
+-				   type, mask);
+-}
+-EXPORT_SYMBOL_GPL(crypto_has_skcipher2);
+-
+-static int skcipher_prepare_alg(struct skcipher_alg *alg)
+-{
+-	struct crypto_alg *base = &alg->base;
+-
+-	if (alg->ivsize > PAGE_SIZE / 8 || alg->chunksize > PAGE_SIZE / 8)
+-		return -EINVAL;
+-
+-	if (!alg->chunksize)
+-		alg->chunksize = base->cra_blocksize;
+-
+-	base->cra_type = &crypto_skcipher_type2;
+-	base->cra_flags &= ~CRYPTO_ALG_TYPE_MASK;
+-	base->cra_flags |= CRYPTO_ALG_TYPE_SKCIPHER;
+-
+-	return 0;
+-}
+-
+-int crypto_register_skcipher(struct skcipher_alg *alg)
+-{
+-	struct crypto_alg *base = &alg->base;
+-	int err;
+-
+-	err = skcipher_prepare_alg(alg);
+-	if (err)
+-		return err;
+-
+-	return crypto_register_alg(base);
+-}
+-EXPORT_SYMBOL_GPL(crypto_register_skcipher);
+-
+-void crypto_unregister_skcipher(struct skcipher_alg *alg)
+-{
+-	crypto_unregister_alg(&alg->base);
+-}
+-EXPORT_SYMBOL_GPL(crypto_unregister_skcipher);
+-
+-int crypto_register_skciphers(struct skcipher_alg *algs, int count)
+-{
+-	int i, ret;
+-
+-	for (i = 0; i < count; i++) {
+-		ret = crypto_register_skcipher(&algs[i]);
+-		if (ret)
+-			goto err;
+-	}
+-
+-	return 0;
+-
+-err:
+-	for (--i; i >= 0; --i)
+-		crypto_unregister_skcipher(&algs[i]);
+-
+-	return ret;
+-}
+-EXPORT_SYMBOL_GPL(crypto_register_skciphers);
+-
+-void crypto_unregister_skciphers(struct skcipher_alg *algs, int count)
+-{
+-	int i;
+-
+-	for (i = count - 1; i >= 0; --i)
+-		crypto_unregister_skcipher(&algs[i]);
+-}
+-EXPORT_SYMBOL_GPL(crypto_unregister_skciphers);
+-
+-int skcipher_register_instance(struct crypto_template *tmpl,
+-			   struct skcipher_instance *inst)
+-{
+-	int err;
+-
+-	err = skcipher_prepare_alg(&inst->alg);
+-	if (err)
+-		return err;
+-
+-	return crypto_register_instance(tmpl, skcipher_crypto_instance(inst));
+-}
+-EXPORT_SYMBOL_GPL(skcipher_register_instance);
+-
+ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("Symmetric key cipher type");
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -7899,6 +7899,8 @@ struct ath10k_vif *ath10k_get_arvif(stru
+ 	return arvif_iter.arvif;
+ }
+ 
++#ifdef CONFIG_ACPI
++
+ #define WRD_METHOD "WRDD"
+ #define WRDD_WIFI  (0x07)
+ 
+@@ -7985,6 +7987,13 @@ static int ath10k_mac_get_wrdd_regulator
+ 	*rd |= COUNTRY_ERD_FLAG;
+ 	return 0;
+ }
++#else
++static int ath10k_mac_get_wrdd_regulatory(struct ath10k *ar, u16 *rd)
++{
++	/* Use EEPROM regulatory information when ACPI is not being used */
++	return -1;
++}
++#endif /* CONFIG_ACPI */
+ 
+ static int ath10k_mac_init_rd(struct ath10k *ar)
+ {
+--- /dev/null
++++ b/backport-include/uapi/linux/genetlink.h
+@@ -0,0 +1,8 @@
++#ifndef __BACKPORT_UAPI_LINUX_GENETLINK_H
++#define __BACKPORT_UAPI_LINUX_GENETLINK_H
++#include_next <uapi/linux/genetlink.h>
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
++#define GENL_UNS_ADMIN_PERM     0x10
++#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0) */
++#endif /*__BACKPORT_UAPI_LINUX_GENETLINK_H */
+--- a/net/mac80211/iface.c
++++ b/net/mac80211/iface.c
+@@ -1920,10 +1920,6 @@ int ieee80211_if_add(struct ieee80211_lo
+ 
+ 		netdev_set_default_ethtool_ops(ndev, &ieee80211_ethtool_ops);
+ 
+-		/* MTU range: 256 - 2304 */
+-		ndev->min_mtu = 256;
+-		ndev->max_mtu = IEEE80211_MAX_DATA_LEN;
+-
+ 		ret = register_netdevice(ndev);
+ 		if (ret) {
+ 			ieee80211_if_free(ndev);
+--- a/backport-include/net/codel.h
++++ /dev/null
+@@ -1,350 +0,0 @@
+-#include <linux/version.h>
+-#include <linux/pkt_sched.h>
+-
+-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,5,0)) || (defined(TCA_CODEL_MAX) && !defined(COMPAT_CODEL_BACKPORT))
+-#include_next <net/codel.h>
+-#else
+-
+-#ifndef __NET_SCHED_CODEL_H
+-#define __NET_SCHED_CODEL_H
+-
+-/*
+- * Codel - The Controlled-Delay Active Queue Management algorithm
+- *
+- *  Copyright (C) 2011-2012 Kathleen Nichols <nichols@pollere.com>
+- *  Copyright (C) 2011-2012 Van Jacobson <van@pollere.net>
+- *  Copyright (C) 2012 Michael D. Taht <dave.taht@bufferbloat.net>
+- *  Copyright (C) 2012 Eric Dumazet <edumazet@google.com>
+- *
+- * Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions
+- * are met:
+- * 1. Redistributions of source code must retain the above copyright
+- *    notice, this list of conditions, and the following disclaimer,
+- *    without modification.
+- * 2. Redistributions in binary form must reproduce the above copyright
+- *    notice, this list of conditions and the following disclaimer in the
+- *    documentation and/or other materials provided with the distribution.
+- * 3. The names of the authors may not be used to endorse or promote products
+- *    derived from this software without specific prior written permission.
+- *
+- * Alternatively, provided that this notice is retained in full, this
+- * software may be distributed under the terms of the GNU General
+- * Public License ("GPL") version 2, in which case the provisions of the
+- * GPL apply INSTEAD OF those given above.
+- *
+- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+- * DAMAGE.
+- *
+- */
+-
+-#include <linux/types.h>
+-#include <linux/ktime.h>
+-#include <linux/skbuff.h>
+-#include <net/pkt_sched.h>
+-#include <net/inet_ecn.h>
+-#include <linux/reciprocal_div.h>
+-
+-/* Controlling Queue Delay (CoDel) algorithm
+- * =========================================
+- * Source : Kathleen Nichols and Van Jacobson
+- * http://queue.acm.org/detail.cfm?id=2209336
+- *
+- * Implemented on linux by Dave Taht and Eric Dumazet
+- */
+-
+-
+-/* CoDel uses a 1024 nsec clock, encoded in u32
+- * This gives a range of 2199 seconds, because of signed compares
+- */
+-typedef u32 codel_time_t;
+-typedef s32 codel_tdiff_t;
+-#define CODEL_SHIFT 10
+-#define MS2TIME(a) ((a * NSEC_PER_MSEC) >> CODEL_SHIFT)
+-
+-static inline codel_time_t codel_get_time(void)
+-{
+-	u64 ns = ktime_to_ns(ktime_get());
+-
+-	return ns >> CODEL_SHIFT;
+-}
+-
+-#define codel_time_after(a, b)		((s32)(a) - (s32)(b) > 0)
+-#define codel_time_after_eq(a, b)	((s32)(a) - (s32)(b) >= 0)
+-#define codel_time_before(a, b)		((s32)(a) - (s32)(b) < 0)
+-#define codel_time_before_eq(a, b)	((s32)(a) - (s32)(b) <= 0)
+-
+-/* Qdiscs using codel plugin must use codel_skb_cb in their own cb[] */
+-struct codel_skb_cb {
+-	codel_time_t enqueue_time;
+-};
+-
+-static struct codel_skb_cb *get_codel_cb(const struct sk_buff *skb)
+-{
+-	qdisc_cb_private_validate(skb, sizeof(struct codel_skb_cb));
+-	return (struct codel_skb_cb *)qdisc_skb_cb(skb)->data;
+-}
+-
+-static codel_time_t codel_get_enqueue_time(const struct sk_buff *skb)
+-{
+-	return get_codel_cb(skb)->enqueue_time;
+-}
+-
+-static void codel_set_enqueue_time(struct sk_buff *skb)
+-{
+-	get_codel_cb(skb)->enqueue_time = codel_get_time();
+-}
+-
+-static inline u32 codel_time_to_us(codel_time_t val)
+-{
+-	u64 valns = ((u64)val << CODEL_SHIFT);
+-
+-	do_div(valns, NSEC_PER_USEC);
+-	return (u32)valns;
+-}
+-
+-/**
+- * struct codel_params - contains codel parameters
+- * @target:	target queue size (in time units)
+- * @interval:	width of moving time window
+- * @ecn:	is Explicit Congestion Notification enabled
+- */
+-struct codel_params {
+-	codel_time_t	target;
+-	codel_time_t	interval;
+-	bool		ecn;
+-};
+-
+-/**
+- * struct codel_vars - contains codel variables
+- * @count:		how many drops we've done since the last time we
+- *			entered dropping state
+- * @lastcount:		count at entry to dropping state
+- * @dropping:		set to true if in dropping state
+- * @rec_inv_sqrt:	reciprocal value of sqrt(count) >> 1
+- * @first_above_time:	when we went (or will go) continuously above target
+- *			for interval
+- * @drop_next:		time to drop next packet, or when we dropped last
+- * @ldelay:		sojourn time of last dequeued packet
+- */
+-struct codel_vars {
+-	u32		count;
+-	u32		lastcount;
+-	bool		dropping;
+-	u16		rec_inv_sqrt;
+-	codel_time_t	first_above_time;
+-	codel_time_t	drop_next;
+-	codel_time_t	ldelay;
+-};
+-
+-#define REC_INV_SQRT_BITS (8 * sizeof(u16)) /* or sizeof_in_bits(rec_inv_sqrt) */
+-/* needed shift to get a Q0.32 number from rec_inv_sqrt */
+-#define REC_INV_SQRT_SHIFT (32 - REC_INV_SQRT_BITS)
+-
+-/**
+- * struct codel_stats - contains codel shared variables and stats
+- * @maxpacket:	largest packet we've seen so far
+- * @drop_count:	temp count of dropped packets in dequeue()
+- * ecn_mark:	number of packets we ECN marked instead of dropping
+- */
+-struct codel_stats {
+-	u32		maxpacket;
+-	u32		drop_count;
+-	u32		ecn_mark;
+-};
+-
+-static void codel_params_init(struct codel_params *params)
+-{
+-	params->interval = MS2TIME(100);
+-	params->target = MS2TIME(5);
+-	params->ecn = false;
+-}
+-
+-static void codel_vars_init(struct codel_vars *vars)
+-{
+-	memset(vars, 0, sizeof(*vars));
+-}
+-
+-static void codel_stats_init(struct codel_stats *stats)
+-{
+-	stats->maxpacket = 256;
+-}
+-
+-/*
+- * http://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Iterative_methods_for_reciprocal_square_roots
+- * new_invsqrt = (invsqrt / 2) * (3 - count * invsqrt^2)
+- *
+- * Here, invsqrt is a fixed point number (< 1.0), 32bit mantissa, aka Q0.32
+- */
+-static void codel_Newton_step(struct codel_vars *vars)
+-{
+-	u32 invsqrt = ((u32)vars->rec_inv_sqrt) << REC_INV_SQRT_SHIFT;
+-	u32 invsqrt2 = ((u64)invsqrt * invsqrt) >> 32;
+-	u64 val = (3LL << 32) - ((u64)vars->count * invsqrt2);
+-
+-	val >>= 2; /* avoid overflow in following multiply */
+-	val = (val * invsqrt) >> (32 - 2 + 1);
+-
+-	vars->rec_inv_sqrt = val >> REC_INV_SQRT_SHIFT;
+-}
+-
+-/*
+- * CoDel control_law is t + interval/sqrt(count)
+- * We maintain in rec_inv_sqrt the reciprocal value of sqrt(count) to avoid
+- * both sqrt() and divide operation.
+- */
+-static codel_time_t codel_control_law(codel_time_t t,
+-				      codel_time_t interval,
+-				      u32 rec_inv_sqrt)
+-{
+-	return t + reciprocal_divide(interval, rec_inv_sqrt << REC_INV_SQRT_SHIFT);
+-}
+-
+-
+-static bool codel_should_drop(const struct sk_buff *skb,
+-			      struct Qdisc *sch,
+-			      struct codel_vars *vars,
+-			      struct codel_params *params,
+-			      struct codel_stats *stats,
+-			      codel_time_t now)
+-{
+-	bool ok_to_drop;
+-
+-	if (!skb) {
+-		vars->first_above_time = 0;
+-		return false;
+-	}
+-
+-	vars->ldelay = now - codel_get_enqueue_time(skb);
+-	sch->qstats.backlog -= qdisc_pkt_len(skb);
+-
+-	if (unlikely(qdisc_pkt_len(skb) > stats->maxpacket))
+-		stats->maxpacket = qdisc_pkt_len(skb);
+-
+-	if (codel_time_before(vars->ldelay, params->target) ||
+-	    sch->qstats.backlog <= stats->maxpacket) {
+-		/* went below - stay below for at least interval */
+-		vars->first_above_time = 0;
+-		return false;
+-	}
+-	ok_to_drop = false;
+-	if (vars->first_above_time == 0) {
+-		/* just went above from below. If we stay above
+-		 * for at least interval we'll say it's ok to drop
+-		 */
+-		vars->first_above_time = now + params->interval;
+-	} else if (codel_time_after(now, vars->first_above_time)) {
+-		ok_to_drop = true;
+-	}
+-	return ok_to_drop;
+-}
+-
+-typedef struct sk_buff * (*codel_skb_dequeue_t)(struct codel_vars *vars,
+-						struct Qdisc *sch);
+-
+-static struct sk_buff *codel_dequeue(struct Qdisc *sch,
+-				     struct codel_params *params,
+-				     struct codel_vars *vars,
+-				     struct codel_stats *stats,
+-				     codel_skb_dequeue_t dequeue_func)
+-{
+-	struct sk_buff *skb = dequeue_func(vars, sch);
+-	codel_time_t now;
+-	bool drop;
+-
+-	if (!skb) {
+-		vars->dropping = false;
+-		return skb;
+-	}
+-	now = codel_get_time();
+-	drop = codel_should_drop(skb, sch, vars, params, stats, now);
+-	if (vars->dropping) {
+-		if (!drop) {
+-			/* sojourn time below target - leave dropping state */
+-			vars->dropping = false;
+-		} else if (codel_time_after_eq(now, vars->drop_next)) {
+-			/* It's time for the next drop. Drop the current
+-			 * packet and dequeue the next. The dequeue might
+-			 * take us out of dropping state.
+-			 * If not, schedule the next drop.
+-			 * A large backlog might result in drop rates so high
+-			 * that the next drop should happen now,
+-			 * hence the while loop.
+-			 */
+-			while (vars->dropping &&
+-			       codel_time_after_eq(now, vars->drop_next)) {
+-				vars->count++; /* dont care of possible wrap
+-						* since there is no more divide
+-						*/
+-				codel_Newton_step(vars);
+-				if (params->ecn && INET_ECN_set_ce(skb)) {
+-					stats->ecn_mark++;
+-					vars->drop_next =
+-						codel_control_law(vars->drop_next,
+-								  params->interval,
+-								  vars->rec_inv_sqrt);
+-					goto end;
+-				}
+-				qdisc_drop(skb, sch);
+-				stats->drop_count++;
+-				skb = dequeue_func(vars, sch);
+-				if (!codel_should_drop(skb, sch,
+-						       vars, params, stats, now)) {
+-					/* leave dropping state */
+-					vars->dropping = false;
+-				} else {
+-					/* and schedule the next drop */
+-					vars->drop_next =
+-						codel_control_law(vars->drop_next,
+-								  params->interval,
+-								  vars->rec_inv_sqrt);
+-				}
+-			}
+-		}
+-	} else if (drop) {
+-		if (params->ecn && INET_ECN_set_ce(skb)) {
+-			stats->ecn_mark++;
+-		} else {
+-			qdisc_drop(skb, sch);
+-			stats->drop_count++;
+-
+-			skb = dequeue_func(vars, sch);
+-			drop = codel_should_drop(skb, sch, vars, params,
+-						 stats, now);
+-		}
+-		vars->dropping = true;
+-		/* if min went above target close to when we last went below it
+-		 * assume that the drop rate that controlled the queue on the
+-		 * last cycle is a good starting point to control it now.
+-		 */
+-		if (codel_time_before(now - vars->drop_next,
+-				      16 * params->interval)) {
+-			vars->count = (vars->count - vars->lastcount) | 1;
+-			/* we dont care if rec_inv_sqrt approximation
+-			 * is not very precise :
+-			 * Next Newton steps will correct it quadratically.
+-			 */
+-			codel_Newton_step(vars);
+-		} else {
+-			vars->count = 1;
+-			vars->rec_inv_sqrt = ~0U >> REC_INV_SQRT_SHIFT;
+-		}
+-		vars->lastcount = vars->count;
+-		vars->drop_next = codel_control_law(now, params->interval,
+-						    vars->rec_inv_sqrt);
+-	}
+-end:
+-	return skb;
+-}
+-#endif
+-#endif
+--- a/drivers/net/wireless/ath/wil6210/netdev.c
++++ b/drivers/net/wireless/ath/wil6210/netdev.c
+@@ -124,7 +124,6 @@ static int wil6210_netdev_poll_tx(struct
+ static void wil_dev_setup(struct net_device *dev)
+ {
+ 	ether_setup(dev);
+-	dev->max_mtu = mtu_max;
+ 	dev->tx_queue_len = WIL_TX_Q_LEN_DEFAULT;
+ }
+ 
+--- a/include/linux/rhashtable.h
++++ b/include/linux/rhashtable.h
+@@ -1,5 +1,5 @@
+ /* Automatically created during backport process */
+-#ifndef CPTCFG_BPAUTO_RHASHTABLE
++#if !defined(CPTCFG_BPAUTO_RHASHTABLE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(4,9,0))
+ #include_next <linux/rhashtable.h>
+ #else
+ #undef lockdep_rht_mutex_is_held

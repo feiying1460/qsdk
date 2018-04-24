@@ -1,0 +1,26 @@
+--- a/drivers/net/wireless/ath/ath10k/pci.c
++++ b/drivers/net/wireless/ath/ath10k/pci.c
+@@ -843,6 +843,7 @@ void ath10k_pci_rx_replenish_retry(unsigned long ptr)
+ static u32 ath10k_pci_targ_cpu_to_ce_addr(struct ath10k *ar, u32 addr)
+ {
+ 	u32 val = 0;
++	u32 region = addr & 0xfffff;
+ 
+ 	switch (ar->hw_rev) {
+ 	case ATH10K_HW_QCA988X:
+@@ -861,7 +862,14 @@ static u32 ath10k_pci_targ_cpu_to_ce_addr(struct ath10k *ar, u32 addr)
+ 		break;
+ 	}
+ 
+-	val |= 0x100000 | (addr & 0xfffff);
++	if (ar->hw_rev == ATH10K_HW_QCA4019 &&
++	    (region >= QCA99X0_SRAM_ADDR && region <=
++	     (QCA99X0_SRAM_ADDR + QCA99X0_SRAM_LEN))) {
++		val |= region;
++	} else {
++		val |= 0x100000 | region;
++	}
++
+ 	return val;
+ }
+

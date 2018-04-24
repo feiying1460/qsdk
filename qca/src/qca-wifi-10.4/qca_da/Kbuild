@@ -1,0 +1,114 @@
+ifeq ($(obj),)
+obj := .
+endif
+
+DEPTH := ..
+
+obj-m += qca_da.o
+
+ifeq ($(strip ${QCA_PARTNER_MAKE_F_SUPPORT}),1)
+export QCA_PARTNER_MAKE_F_INC=1
+endif
+include $(obj)/$(DEPTH)/os/linux/Makefile-linux.common
+
+INCS += -I$(obj)/$(DEPTH)/include -I$(obj)/$(DEPTH)/umac/include \
+        -I$(obj)/$(DEPTH)/umac/if_lmac -I$(obj)/$(DEPTH)/umac/crypto \
+        -I$(obj)/$(DEPTH)/umac/scan -I$(obj)/$(DEPTH)/umac/resmgr \
+        -I$(obj)/$(DEPTH)/umac/pm -I$(obj)/$(DEPTH)/umac/txrx \
+        -I$(obj)/$(DEPTH)/umac/acs -I$(obj)/$(DEPTH)/umac/txbf \
+        -I$(obj)/$(DEPTH)/umac/wnm \
+        -I$(obj)/$(DEPTH)/umac/tdls -I$(obj)/$(DEPTH)/umac/dfs \
+        -I$(obj)/$(DEPTH)/umac/rpt_placement \
+        -I$(obj)/$(DEPTH)/umac/wifipos \
+        -I$(obj)/$(DEPTH)/umac/wds -I$(obj)/$(DEPTH)/umac/ique \
+        -I$(obj)/$(DEPTH)/hal -I$(obj)/$(DEPTH)/lmac/ath_dev \
+        -I$(obj)/$(DEPTH)/lmac/dfs \
+        -I$(obj)/$(DEPTH)/hal/$(OS) \
+        -I$(obj)/$(DEPTH)/umac/vi_dbg \
+        -I$(obj)/$(DEPTH)/umac/smart_antenna \
+        -I$(obj)/$(DEPTH)/umac/smart_ant \
+        -I$(obj)/$(DEPTH)/umac/ald \
+        -I$(obj)/$(DEPTH)/lmac/ath_pktlog \
+        -I$(obj)/$(DEPTH)/lmac/ratectrl \
+        -I$(obj)/$(DEPTH)/os/linux/mem/ \
+        -I$(obj)/$(DEPTH)/umac/base
+
+ifeq ($(TARGET),ANDROID)
+COPTS += -Wframe-larger-than=4096
+endif
+
+ifeq ($(TARGET),i386-elf)
+COPTS += -Wframe-larger-than=1190
+endif #x86 stack frame limit
+
+ifeq ($(TARGET),armv4-le-elf)
+COPTS += -Wframe-larger-than=1190
+endif #arm stack frame limit
+
+
+EXTRA_CFLAGS+= $(INCS) $(COPTS) -Wno-unused-function
+
+ifeq ($(strip $(ATH_HIF_TYPE)),pci)
+EXTRA_CFLAGS += -DHIF_PCI
+endif
+
+OSDEP_SRC := $(DEPTH)/os/linux/src
+
+qca_da-objs := $(OSDEP_SRC)/ieee80211_aponly.o \
+               $(OSDEP_SRC)/ath_linux.o \
+               $(DEPTH)/umac/if_lmac/if_ath.o \
+               $(DEPTH)/umac/if_lmac/if_ath_amsdu.o \
+               $(DEPTH)/umac/if_lmac/ath_cwm.o \
+               $(DEPTH)/umac/if_lmac/ath_cwm_project.o \
+               $(DEPTH)/umac/if_lmac/if_ath_uapsd.o \
+               $(DEPTH)/umac/if_lmac/if_ath_dfs.o \
+               $(DEPTH)/umac/if_lmac/if_ath_quiet.o \
+               $(DEPTH)/umac/if_lmac/if_ath_mat.o
+
+ifeq ($(UMAC_SUPPORT_ACFG), 1)
+qca_da-objs += $(OSDEP_SRC)/ath_ioctl_acfg.o
+endif
+
+ifeq ($(strip $(BUSNAME)),dual)
+qca_da-objs += if_ath_pci.o
+qca_da-objs += if_ath_ahb.o
+ifeq ($(VERSION), 4)
+ifeq ($(PATCHLEVEL), 4)
+EXTRA_CFLAGS += -Wno-format
+endif
+endif
+endif
+
+ifeq ($(strip $(BUSNAME)),pci)
+qca_da-objs += if_ath_pci.o
+endif
+
+ifeq ($(strip $(BUSNAME)),ahb)
+qca_da-objs += if_ath_ahb.o
+ifeq ($(VERSION), 4)
+ifeq ($(PATCHLEVEL), 4)
+EXTRA_CFLAGS += -Wno-format
+endif
+endif
+endif
+
+ifeq ($(QCA_THIRDPARTY), 1)
+EXTRA_CFLAGS += -DQCA_PARTNER_DA_SUPPORT=1 -DQCA_PARTNER_OL_SUPPORT=0
+endif
+
+ifeq ($(strip ${QCA_PARTNER_MAKE_F_SUPPORT}),1)
+all: qca_da.ko
+
+qca_da.mod.o: qca_da.mod.c
+	${CC} -c -o $@ ${EXTRA_CFLAGS} ${MOD_CFLAGS} $<
+
+qca_da.o: ${qca_da-objs}
+	$(LD) -m elf32btsmip -r -o qca_da.o $(qca_da-objs)
+	$(KERNELPATH)/scripts/mod/modpost qca_da.o
+
+qca_da.ko: qca_da.o qca_da.mod.o
+	$(LD) $(LDOPTS) -o qca_da.ko qca_da.o qca_da.mod.o
+
+%.o: %.c
+	${CC} -c -o $@ ${EXTRA_CFLAGS} $<
+endif

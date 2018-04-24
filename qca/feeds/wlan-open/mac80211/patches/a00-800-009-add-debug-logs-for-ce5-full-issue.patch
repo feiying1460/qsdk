@@ -1,0 +1,65 @@
+Index: backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/ce.c
+===================================================================
+--- backports-20161201-3.14.77-9ab3068.orig/drivers/net/wireless/ath/ath10k/ce.c	2017-03-25 19:00:54.715748885 +0530
++++ backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/ce.c	2017-03-25 19:04:57.702060650 +0530
+@@ -1134,9 +1134,9 @@
+ void ath10k_ce_dump_registers(struct ath10k *ar)
+ {
+ 	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+-	struct ath10k_pci_pipe *pci_tx;
++	struct ath10k_pci_pipe *pci_pipe;
+ 	struct ath10k_ce_pipe *ce_state;
+-	struct ath10k_ce_ring *src_ring;
++	struct ath10k_ce_ring *ce_ring;
+ 	struct ce_desc *base;
+ 	struct ce_desc *src_desc;
+ 	u32 ce_id, start, addr;
+@@ -1158,20 +1158,36 @@
+ 			   ath10k_ce_dest_ring_read_index_get(ar, addr));
+ 	}
+ 
+-	/* We are interested in Copy Engine 4 Host to target HTT */
+-	pci_tx = &ar_pci->pipe_info[CE4_HOST_TARGET_HTT];
+-	ce_state = pci_tx->ce_hdl;
+-	src_ring = ce_state->src_ring;
+-
+-	write_index = src_ring->write_index;
+-	sw_index = src_ring->sw_index;
+-	hw_index = src_ring->hw_index;
+-	nentries_mask = src_ring->nentries_mask;
++	/* Dump indices of CE0 to CE5  when firmware crashes, this information
++	 * is helpful in debugging CE5 full, WMI failures due to CE2/CE3.
++	 * CE5 is a special case where CE buffers are reused using dma sync API
++	 * unlike other CE's.
++	 */
++	for (ce_id = 0; ce_id <= 5; ce_id++) {
++		pci_pipe = &ar_pci->pipe_info[ce_id];
++		ce_state = pci_pipe->ce_hdl;
++		ce_ring = ce_state->dest_ring;
++
++		if (!ce_ring)
++			continue;
++
++		write_index = ce_ring->write_index;
++		sw_index = ce_ring->sw_index;
++		hw_index = ce_ring->hw_index;
++		nentries_mask = ce_ring->nentries_mask;
+ 
+-	ath10k_err(ar, "write_index %u sw_index %u hw_index %u nentries_mask 0x%08x\n",
+-		   write_index, sw_index, hw_index, nentries_mask);
++		ath10k_err(ar, "CE[%d] write_index %u sw_index %u hw_index %u nentries_mask 0x%08x\n",
++			   ce_id, write_index, sw_index, hw_index, nentries_mask);
++	}
+ 
+-	base = src_ring->base_addr_owner_space;
++	/* We are interested in Copy Engine 4 Host to target HTT */
++	pci_pipe = &ar_pci->pipe_info[CE4_HOST_TARGET_HTT];
++	ce_state = pci_pipe->ce_hdl;
++	ce_ring = ce_state->src_ring;
++
++	write_index = ce_ring->write_index;
++	nentries_mask = ce_ring->nentries_mask;
++	base = ce_ring->base_addr_owner_space;
+ 	start = (write_index  - CE_DESC_DUMP_COUNT) & (nentries_mask);
+ 
+ 	ath10k_err(ar, "DMA addr: nbytes: meta data: byte swap: gather:\n");

@@ -1,0 +1,129 @@
+--- a/drivers/net/wireless/ath/ath10k/core.c
++++ b/drivers/net/wireless/ath/ath10k/core.c
+@@ -1956,6 +1956,38 @@ static int ath10k_core_reset_rx_filter(s
+ 	return 0;
+ }
+ 
++static void ath10k_core_fetch_btcoex_dt(struct ath10k *ar)
++{
++	struct device_node *node;
++	u32 btcoex_support = 0;
++	int ret;
++
++	node = ar->dev->of_node;
++	if (!node)
++		goto out;
++
++	ret = of_property_read_u32(node, "btcoex_support", &btcoex_support);
++	if (ret) {
++		ar->btcoex_support = ATH10K_DT_BTCOEX_NOT_FOUND;
++		goto out;
++	}
++
++	if (btcoex_support)
++		ar->btcoex_support = ATH10K_DT_BTCOEX_SUPPORTED;
++	else
++		ar->btcoex_support = ATH10K_DT_BTCOEX_NOT_SUPPORTED;
++
++	ret = of_property_read_u32(node, "wlan_prio_gpio",
++				   &ar->btcoex_gpio_pin);
++
++	if (ret)
++		ar->btcoex_gpio_pin = -1;
++
++out:
++	ath10k_dbg(ar, ATH10K_DBG_BOOT, "btcoex support flag :%d gpio %d\n",
++		   ar->btcoex_support, ar->btcoex_gpio_pin);
++}
++
+ int ath10k_core_start(struct ath10k *ar, enum ath10k_firmware_mode mode,
+ 		      const struct ath10k_fw_components *fw)
+ {
+@@ -2092,6 +2124,7 @@ int ath10k_core_start(struct ath10k *ar,
+ 		if (test_bit(WMI_SERVICE_BSS_CHANNEL_INFO_64, ar->wmi.svc_map))
+ 			val |= WMI_10_4_BSS_CHANNEL_INFO_64;
+ 
++		ath10k_core_fetch_btcoex_dt(ar);
+ 		/* 10.4 firmware supports BT-Coex without reloading firmware
+ 		 * via pdev param. To support Bluetooth coexistence pdev param,
+ 		 * WMI_COEX_GPIO_SUPPORT of extended resource config should be
+@@ -2099,7 +2132,8 @@ int ath10k_core_start(struct ath10k *ar,
+ 		 */
+ 		if (test_bit(WMI_SERVICE_COEX_GPIO, ar->wmi.svc_map) &&
+ 		    test_bit(ATH10K_FW_FEATURE_BTCOEX_PARAM,
+-			     ar->running_fw->fw_file.fw_features))
++			     ar->running_fw->fw_file.fw_features) &&
++		    ar->btcoex_support != ATH10K_DT_BTCOEX_NOT_SUPPORTED)
+ 			val |= WMI_10_4_COEX_GPIO_SUPPORT;
+ 
+ 		status = ath10k_mac_ext_resource_config(ar, val);
+--- a/drivers/net/wireless/ath/ath10k/core.h
++++ b/drivers/net/wireless/ath/ath10k/core.h
+@@ -757,6 +757,13 @@ enum ath10k_tx_pause_reason {
+ 	ATH10K_TX_PAUSE_MAX,
+ };
+ 
++enum ath10k_dt_btcoex_support_flag {
++	ATH10K_DT_BTCOEX_NOT_FOUND,
++	ATH10K_DT_BTCOEX_SUPPORTED,
++	ATH10K_DT_BTCOEX_NOT_SUPPORTED,
++};
++
++
+ struct ath10k_fw_file {
+ 	const struct firmware *firmware;
+ 
+@@ -1049,6 +1056,9 @@ struct ath10k {
+ 
+ 	bool ethernet_mode;
+ 
++	enum ath10k_dt_btcoex_support_flag btcoex_support;
++	int btcoex_gpio_pin;
++
+ 	/* must be last */
+ 	u8 drv_priv[0] __aligned(sizeof(void *));
+ };
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -4612,7 +4612,8 @@ static int ath10k_start(struct ieee80211
+ 	param = ar->wmi.pdev_param->enable_btcoex;
+ 	if (test_bit(WMI_SERVICE_COEX_GPIO, ar->wmi.svc_map) &&
+ 	    test_bit(ATH10K_FW_FEATURE_BTCOEX_PARAM,
+-		     ar->running_fw->fw_file.fw_features)) {
++		     ar->running_fw->fw_file.fw_features) &&
++	    ar->btcoex_support != ATH10K_DT_BTCOEX_NOT_SUPPORTED) {
+ 		ret = ath10k_wmi_pdev_set_param(ar, param, 0);
+ 		if (ret) {
+ 			ath10k_warn(ar,
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -7850,6 +7850,7 @@ ath10k_wmi_10_4_ext_resource_config(stru
+ 	cmd = (struct wmi_ext_resource_config_10_4_cmd *)skb->data;
+ 	cmd->host_platform_config = __cpu_to_le32(type);
+ 	cmd->fw_feature_bitmap = __cpu_to_le32(fw_feature_bitmap);
++	cmd->btcoex_gpio_pin = __cpu_to_le32(ar->btcoex_gpio_pin);
+ 
+ 	ath10k_dbg(ar, ATH10K_DBG_WMI,
+ 		   "wmi ext resource config host type %d firmware feature bitmap %08x\n",
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -2739,6 +2739,7 @@ struct wmi_ext_resource_config_10_4_cmd
+ 	__le32 host_platform_config;
+ 	/* see enum wmi_10_4_feature_mask */
+ 	__le32 fw_feature_bitmap;
++	__le32 btcoex_gpio_pin;
+ };
+ 
+ struct wmi_set_coex_param_10_4_cmd {
+--- a/drivers/net/wireless/ath/ath10k/debug.c
++++ b/drivers/net/wireless/ath/ath10k/debug.c
+@@ -2255,6 +2255,9 @@ static ssize_t ath10k_write_btcoex(struc
+ 	if (strtobool(buf, &val) != 0)
+ 		return -EINVAL;
+ 
++	if (ar->btcoex_support == ATH10K_DT_BTCOEX_NOT_SUPPORTED)
++		return -EOPNOTSUPP;
++
+ 	mutex_lock(&ar->conf_mutex);
+ 
+ 	if (ar->state != ATH10K_STATE_ON &&

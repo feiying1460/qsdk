@@ -1,0 +1,156 @@
+diff --git a/src/ap/ap_drv_ops.c b/src/ap/ap_drv_ops.c
+index f139465..a8a2131 100644
+--- a/src/ap/ap_drv_ops.c
++++ b/src/ap/ap_drv_ops.c
+@@ -340,10 +340,21 @@ int hostapd_add_sta_node(struct hostapd_data *hapd, const u8 *addr,
+ int hostapd_sta_auth(struct hostapd_data *hapd, const u8 *addr,
+ 		     u16 seq, u16 status, const u8 *ie, size_t len)
+ {
++	struct wpa_driver_sta_auth_params params;
++
+ 	if (hapd->driver == NULL || hapd->driver->sta_auth == NULL)
+ 		return 0;
+-	return hapd->driver->sta_auth(hapd->drv_priv, hapd->own_addr, addr,
+-				      seq, status, ie, len);
++
++	os_memset(&params, 0, sizeof(params));
++
++	params.own_addr = hapd->own_addr;
++	params.addr = addr;
++	params.seq = seq;
++	params.status = status;
++	params.ie = ie;
++	params.len = len;
++
++	return hapd->driver->sta_auth(hapd->drv_priv, &params);
+ }
+ 
+ 
+diff --git a/src/drivers/driver.h b/src/drivers/driver.h
+index ac974e5..aca3382 100644
+--- a/src/drivers/driver.h
++++ b/src/drivers/driver.h
+@@ -595,6 +595,43 @@ struct hostapd_freq_params {
+ };
+ 
+ /**
++ * struct wpa_driver_sta_auth_params - Authentication parameters
++ * Data for struct wpa_driver_ops::sta_auth().
++ */
++struct wpa_driver_sta_auth_params {
++
++	/**
++	 * own_addr - Source address and BSSID for authentication frame
++	 */
++	const u8 *own_addr;
++
++	/**
++	 * addr - MAC address of the station to associate
++	 */
++	const u8 *addr;
++
++	/**
++	 * seq - authentication sequence number
++	 */
++	u16 seq;
++
++	/**
++	 * status - authentication response status code
++	 */
++	u16 status;
++
++	/**
++	 * ie - authentication frame ie buffer
++	 */
++	const u8 *ie;
++
++	/**
++	 * len - ie buffer length
++	 */
++	size_t len;
++};
++
++/**
+  * struct wpa_driver_associate_params - Association parameters
+  * Data for struct wpa_driver_ops::associate().
+  */
+@@ -3142,19 +3179,13 @@ struct wpa_driver_ops {
+ 
+ 	/**
+ 	 * sta_auth - Station authentication indication
+-	 * @priv: Private driver interface data
+-	 * @own_addr: Source address and BSSID for authentication frame
+-	 * @addr: MAC address of the station to associate
+-	 * @seq: authentication sequence number
+-	 * @status: authentication response status code
+-	 * @ie: authentication frame ie buffer
+-	 * @len: ie buffer length
++	 * @priv: private driver interface data
++	 * @params: Station authentication parameters
+ 	 *
+-	 * This function indicates the driver to send Authentication frame
+-	 * to the station.
++	 * Returns: 0 on success, -1 on failure
+ 	 */
+-	 int (*sta_auth)(void *priv, const u8 *own_addr, const u8 *addr,
+-			 u16 seq, u16 status, const u8 *ie, size_t len);
++	 int (*sta_auth)(void *priv,
++			 struct wpa_driver_sta_auth_params *params);
+ 
+ 	/**
+ 	 * add_tspec - Add traffic stream
+diff --git a/src/drivers/driver_atheros.c b/src/drivers/driver_atheros.c
+index 914afd3..4f60acb 100644
+--- a/src/drivers/driver_atheros.c
++++ b/src/drivers/driver_atheros.c
+@@ -1052,30 +1052,29 @@ atheros_set_ap_wps_ie(void *priv, const struct wpabuf *beacon,
+ 
+ #if defined(CONFIG_IEEE80211R) || defined(CONFIG_IEEE80211W)
+ static int
+-atheros_sta_auth(void *priv, const u8 *own_addr, const u8 *addr, u16 seq,
+-		 u16 status_code, const u8 *ie, size_t len)
++atheros_sta_auth(void *priv, struct wpa_driver_sta_auth_params *params)
+ {
+ 	struct atheros_driver_data *drv = priv;
+ 	struct ieee80211req_mlme mlme;
+ 	int ret;
+ 
+ 	wpa_printf(MSG_DEBUG, "%s: addr=%s status_code=%d",
+-		   __func__, ether_sprintf(addr), status_code);
++		   __func__, ether_sprintf(params->addr), params->status);
+ 
+ 	mlme.im_op = IEEE80211_MLME_AUTH;
+-	mlme.im_reason = status_code;
+-	mlme.im_seq = seq;
+-	os_memcpy(mlme.im_macaddr, addr, IEEE80211_ADDR_LEN);
+-	mlme.im_optie_len = len;
+-	if (len) {
+-		if (len < IEEE80211_MAX_OPT_IE) {
+-			os_memcpy(mlme.im_optie, ie, len);
++	mlme.im_reason = params->status;
++	mlme.im_seq = params->seq;
++	os_memcpy(mlme.im_macaddr, params->addr, IEEE80211_ADDR_LEN);
++	mlme.im_optie_len = params->len;
++	if (params->len) {
++		if (params->len < IEEE80211_MAX_OPT_IE) {
++			os_memcpy(mlme.im_optie, params->ie, params->len);
+ 		} else {
+ 			wpa_printf(MSG_DEBUG, "%s: Not enough space to copy "
+ 				   "opt_ie STA (addr " MACSTR " reason %d, "
+ 				   "ie_len %d)",
+-				   __func__, MAC2STR(addr), status_code,
+-				   (int) len);
++				   __func__, MAC2STR(params->addr), params->status,
++				   (int) params->len);
+ 			return -1;
+ 		}
+ 	}
+@@ -1083,7 +1082,7 @@ atheros_sta_auth(void *priv, const u8 *own_addr, const u8 *addr, u16 seq,
+ 	if (ret < 0) {
+ 		wpa_printf(MSG_DEBUG, "%s: Failed to auth STA (addr " MACSTR
+ 			   " reason %d)",
+-			   __func__, MAC2STR(addr), status_code);
++			   __func__, MAC2STR(params->addr), params->status);
+ 	}
+ 	return ret;
+ }

@@ -1,0 +1,6 @@
+config WSPLCD_SUPPORT_PLC
+    bool "Support PLC credential cloning"
+    depends on PACKAGE_qca-plc-serv
+    default y
+    help
+        This enables the WSPLCD support for PLC interfaces

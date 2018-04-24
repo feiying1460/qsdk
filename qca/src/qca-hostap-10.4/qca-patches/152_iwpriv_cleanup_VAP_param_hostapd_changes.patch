@@ -1,0 +1,159 @@
+diff --git a/src/drivers/driver_athr.c b/src/drivers/driver_athr.c
+index 19dd5c8..59f4c4b 100644
+--- a/src/drivers/driver_athr.c
++++ b/src/drivers/driver_athr.c
+@@ -254,8 +254,6 @@ static const char * athr_get_param_name(int op)
+ 		return "OPTIE";
+ 	case IEEE80211_IOC_BSSID:
+ 		return "BSSID";
+-	case IEEE80211_IOC_P2P_SET_CHANNEL:
+-		return "P2P_SET_CHANNEL";
+ 	case IEEE80211_IOC_P2P_CANCEL_CHANNEL:
+ 		return "P2P_CANCEL_CHANNEL";
+ 	case IEEE80211_IOC_P2P_SEND_ACTION:
+@@ -266,10 +264,6 @@ static const char * athr_get_param_name(int op)
+ 		return "SCAN_FLUSH";
+ 	case IEEE80211_IOC_CONNECTION_STATE:
+ 		return "CONNECTION_STATE";
+-#ifdef IEEE80211_IOC_P2P_FIND_BEST_CHANNEL
+-	case IEEE80211_IOC_P2P_FIND_BEST_CHANNEL:
+-		return "P2P_FIND_BEST_CHANNEL";
+-#endif /* IEEE80211_IOC_P2P_FIND_BEST_CHANNEL */
+ 	default:
+ 		return "??";
+ 	}
+@@ -1870,72 +1864,6 @@ static u8 * driver_atheros_giwscan(struct driver_atheros_data *drv,
+ }
+ 
+ 
+-#ifdef IEEE80211_IOC_P2P_FIND_BEST_CHANNEL
+-/**
+- * Get the best channel after a scan; to be invoked after a scan
+- * @drv: Pointer to private data from driver_atheros_init()
+- * Returns: zero on success, -1 on failure
+- */
+-static int driver_atheros_get_best_channel(struct driver_atheros_data *drv)
+-{
+-	int best_24, best_5, best_overall;
+-	int buf[3];
+-	int retv;
+-	int changed = 0;
+-
+-	os_memset(buf, 0, sizeof(buf));
+-
+-	retv = set80211big(drv, IEEE80211_IOC_P2P_FIND_BEST_CHANNEL, buf,
+-			   sizeof(buf));
+-	if (retv < 0) {
+-		wpa_printf(MSG_DEBUG, "%s set80211big returns %d",
+-			   __func__, retv);
+-		return -1;
+-	}
+-
+-	best_5 = buf[0];
+-	best_24 = buf[1];
+-	best_overall = buf[2];
+-
+-	wpa_printf(MSG_DEBUG, "athr: Best channel: 5 GHz: %d MHz  "
+-		   "2.4 GHz: %d MHz  overall: %d MHz",
+-		   best_5, best_24, best_overall);
+-
+-	if (best_5 != drv->best_5_freq) {
+-		wpa_printf(MSG_DEBUG, "athr: Best 5 GHz channel changed from "
+-			   "%d to %d MHz", drv->best_5_freq, best_5);
+-		drv->best_5_freq = best_5;
+-		changed = 1;
+-	}
+-
+-	if (best_24 != drv->best_24_freq) {
+-		wpa_printf(MSG_DEBUG, "athr: Best 2.4 GHz channel changed "
+-			   "from %d to %d MHz", drv->best_24_freq, best_24);
+-		drv->best_24_freq = best_24;
+-		changed = 1;
+-	}
+-
+-	if (best_overall != drv->best_overall_freq) {
+-		wpa_printf(MSG_DEBUG, "athr: Best overall channel changed "
+-			   "from %d to %d MHz", drv->best_overall_freq,
+-			   best_overall);
+-		drv->best_overall_freq = best_overall;
+-		changed = 1;
+-	}
+-
+-	if (changed) {
+-		union wpa_event_data data;
+-		data.best_chan.freq_24 = drv->best_24_freq;
+-		data.best_chan.freq_5 = drv->best_5_freq;
+-		data.best_chan.freq_overall = drv->best_overall_freq;
+-		wpa_supplicant_event(drv->ctx, EVENT_BEST_CHANNEL, &data);
+-	}
+-
+-	return 0;
+-}
+-#endif /* IEEE80211_IOC_P2P_FIND_BEST_CHANNEL */
+-
+-
+ /**
+  * driver_atheros_get_scan_results - Fetch the latest scan results
+  * @priv: Pointer to private wext data from driver_atheros_init()
+@@ -2020,10 +1948,6 @@ static struct wpa_scan_results * driver_atheros_get_scan_results(void *priv)
+ 	wpa_printf(MSG_DEBUG, "Received %lu bytes of scan results (%lu BSSes)",
+ 		   (unsigned long) len, (unsigned long) res->num);
+ 
+-#ifdef IEEE80211_IOC_P2P_FIND_BEST_CHANNEL
+-	if (drv->prev_scan_type == ATHR_FULL_SCAN)
+-		driver_atheros_get_best_channel(drv);
+-#endif /* IEEE80211_IOC_P2P_FIND_BEST_CHANNEL */
+ 
+ 	return res;
+ }
+@@ -3136,41 +3060,6 @@ static int driver_atheros_send_action(void *priv, unsigned int freq,
+ 	return res;
+ }
+ 
+-
+-static int driver_atheros_remain_on_channel(void *priv, unsigned int freq,
+-					    unsigned int duration)
+-{
+-	struct driver_atheros_data *drv = priv;
+-	struct ieee80211_p2p_set_channel sc;
+-	int res;
+-
+-	drv->req_id++;
+-	wpa_printf(MSG_DEBUG, "athr: IOC_P2P_SET_CHANNEL: req_id=%u freq=%u "
+-		   "MHz dur=%u msec", drv->req_id, freq, duration);
+-	if (drv->drv_in_scan)
+-		wpa_printf(MSG_DEBUG, "athr: Remain-on-channel request when "
+-			   "driver still in scan");
+-	if (drv->drv_in_remain_on_chan)
+-		wpa_printf(MSG_DEBUG, "athr: Remain-on-channel request when "
+-			   "driver still in remain-on-channel");
+-	os_memset(&sc, 0, sizeof(sc));
+-	sc.freq = freq;
+-	sc.req_id = drv->req_id;
+-	sc.channel_time = duration;
+-	res = set80211big(drv, IEEE80211_IOC_P2P_SET_CHANNEL,
+-			  &sc, sizeof(sc));
+-	if (res == 0) {
+-		drv->pending_set_chan_freq = freq;
+-		drv->pending_set_chan_dur = duration;
+-		/*
+-		 * IEEE80211_EV_CHAN_START event is generated once the driver
+-		 * has completed the request.
+-		 */
+-	} else
+-		drv->pending_set_chan_freq = 0;
+-	return res;
+-}
+-
+ static int driver_atheros_cancel_remain_on_channel(void *priv)
+ {
+ 	int ret;
+@@ -4244,7 +4133,7 @@ const struct wpa_driver_ops wpa_driver_athr_ops = {
+ 	.get_hw_feature_data = athr_get_hw_feature_data,
+ 	.set_operstate = driver_atheros_set_operstate,
+ 	.send_action = driver_atheros_send_action,
+-	.remain_on_channel = driver_atheros_remain_on_channel,
++	.remain_on_channel = NULL,
+ 	.cancel_remain_on_channel = driver_atheros_cancel_remain_on_channel,
+ 	.probe_req_report = driver_atheros_probe_req_report,
+ 	.sta_deauth = driver_atheros_hapd_sta_deauth,

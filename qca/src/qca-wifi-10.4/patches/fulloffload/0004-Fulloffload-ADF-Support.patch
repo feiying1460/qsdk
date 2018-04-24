@@ -1,0 +1,1451 @@
+From 1794e1ab1301396c30e7551a1b742224e1cf37d5 Mon Sep 17 00:00:00 2001
+From: Venkata krishna Sundararajan <vsundara@qti.qualcomm.com>
+Date: Mon, 19 Dec 2016 13:10:24 +0530
+Subject: [PATCH] Fulloffload-ADF-Support
+
+Change-Id: I8f19c1a4e729677bb35c26e6e7c80e3ae8d708ce
+Signed-off-by: Venkata krishna Sundararajan <vsundara@qti.qualcomm.com>
+---
+ adf/Kbuild                            |   6 +-
+ adf/include/nbuf/adf_nbuf.h           |  25 ---
+ adf/include/net/adf_net_offload_cfg.h |   7 +-
+ adf/include/os/adf_os_fs.h            |   2 +-
+ adf/include/os/adf_os_types.h         |  24 ---
+ adf/nbuf/linux/adf_nbuf.c             |  52 ------
+ adf/nbuf/linux/adf_nbuf_pvt.h         |   4 +-
+ adf/net/linux/adf_net.c               |  32 +++-
+ adf/net/linux/adf_net_event.c         |   9 +-
+ adf/net/linux/adf_net_ioctl.c         |  74 ++++-----
+ adf/net/linux/adf_net_pvt.h           |   8 +-
+ adf/net/linux/adf_net_wext.c          | 297 +++++++++++++++++++++++++++-------
+ adf/net/linux/adf_net_wext_pvt.h      |   7 +-
+ adf/net/linux/wcfg.h                  |   5 +-
+ adf/os/adf_os_fs.c                    |   2 +-
+ adf/os/linux/adf_os_defer_pvt.h       |   4 +-
+ adf/os/linux/adf_os_fs_pvt.c          |  19 ++-
+ adf/os/linux/adf_os_fs_pvt.h          |   2 +-
+ adf/os/linux/adf_os_util_pvt.h        |   4 +-
+ adf/os/linux/adf_os_waitq_pvt.h       |   0
+ 20 files changed, 349 insertions(+), 234 deletions(-)
+ mode change 100644 => 100755 adf/os/linux/adf_os_waitq_pvt.h
+
+diff --git a/adf/Kbuild b/adf/Kbuild
+index 066250f..449e32c 100644
+--- a/adf/Kbuild
++++ b/adf/Kbuild
+@@ -24,11 +24,11 @@ endif
+ 
+ INCS += -Iinclude/nbuf -Iinclude/net -Iinclude/os
+ INCS += -Inbuf/linux -Inet/linux -Ios/linux
+-INCS += -I$(WLAN_TOP)/../../include
++INCS += -I$(WLAN_TOP)/../../include -I$(WLAN_TOP)/hal/linux
+ 
+ obj-m += adf.o
+ 
+-EXTRA_CFLAGS+= $(INCS) $(COPTS) -Wno-unused-function
++EXTRA_CFLAGS+= $(INCS) $(COPTS) -Wno-unused-function -Wno-undef
+ 
+ ifeq ($(strip ${QCA_PARTNER_MAKE_F_SUPPORT}),1)
+ MOD_CFLAGS = -D"KBUILD_STR(s)=\#s" -D"KBUILD_BASENAME=KBUILD_STR(adf.mod)"  -D"KBUILD_MODNAME=KBUILD_STR(adf)" 
+@@ -47,7 +47,7 @@ adf-objs :=                     \
+ 
+ 
+ ifeq ($(BUILD_ADF_NET_IOCTL),1)
+-EXTRA_CFLAGS+= -DADF_NET_IOCTL_SUPPORT
++EXTRA_CFLAGS+= -DADF_NET_IOCTL_SUPPORT  -Wno-undef
+ adf-objs += os/linux/adf_os_netlink_pvt.o \
+     net/linux/adf_net_event.o  \
+     net/linux/adf_net_wext.o    \
+diff --git a/adf/include/nbuf/adf_nbuf.h b/adf/include/nbuf/adf_nbuf.h
+index af162ec..1fe37d8 100644
+--- a/adf/include/nbuf/adf_nbuf.h
++++ b/adf/include/nbuf/adf_nbuf.h
+@@ -378,19 +378,6 @@ adf_nbuf_is_chfrag_end(adf_nbuf_t buf)
+     return __adf_nbuf_is_chfrag_end(buf);
+ }
+ 
+-/**
+- * @brief returns information about the mapped buf
+- *
+- * @param[in]  bmap map handle
+- * @param[out] sg   map info
+- */
+-static inline void
+-adf_nbuf_dmamap_info(adf_os_dma_map_t bmap, adf_os_dmamap_info_t *sg)
+-{
+-    __adf_nbuf_dmamap_info(bmap, sg);
+-}
+-
+-
+ 
+ /*
+  * nbuf allocation rouines
+@@ -793,18 +780,6 @@ adf_nbuf_reserve(adf_nbuf_t buf, adf_os_size_t size)
+  */
+ 
+ /**
+- * @brief return the frag pointer & length of the frag
+- *
+- * @param[in]  buf   buffer
+- * @param[out] sg    this will return all the frags of the nbuf
+- *
+- */
+-static inline void
+-adf_nbuf_frag_info(adf_nbuf_t buf, adf_os_sglist_t *sg)
+-{
+-    __adf_nbuf_frag_info(buf, sg);
+-}
+-/**
+  * @brief return the data pointer & length of the header
+  *
+  * @param[in]  buf  nbuf
+diff --git a/adf/include/net/adf_net_offload_cfg.h b/adf/include/net/adf_net_offload_cfg.h
+index 0436695..4572f9e 100644
+--- a/adf/include/net/adf_net_offload_cfg.h
++++ b/adf/include/net/adf_net_offload_cfg.h
+@@ -17,7 +17,8 @@
+ #ifndef __ATD_CFG_H
+ #define __ATD_CFG_H
+ 
+-#include <acfg_drv_if.h>
++#include <ieee80211_external_config.h>
++#include <acfg_api_types.h>
+ 
+ /** 
+  * @brief   This WLAN Config structure is registered to the 
+@@ -320,6 +321,7 @@ typedef struct atd_cfg_vap {
+     a_status_t (*get_sta_info)(adf_drv_handle_t hdl, \
+                             a_uint8_t *buff, a_uint32_t buflen);
+ 
++#if 0
+     /** 
+      * @brief Init security service
+      */
+@@ -377,6 +379,7 @@ typedef struct atd_cfg_vap {
+      * @brief Supplicant bridge setting at run time
+      */
+     a_status_t (*wsupp_set)(adf_drv_handle_t hdl, acfg_wsupp_info_t *winfo);
++#endif
+ 
+     /** 
+      * @brief Set value of a wmm param
+@@ -627,7 +630,7 @@ typedef struct atd_cfg_wifi {
+                              a_uint8_t       icp_name[ACFG_MAX_IFNAME],
+                              acfg_opmode_t         icp_opmode, 
+                              a_int32_t             icp_vapid, 
+-                             acfg_vapinfo_flags_t  icp_vapflags);
++                             a_uint32_t      icp_vapflags);
+     /** 
+      * @brief Set value of a param
+      * 
+diff --git a/adf/include/os/adf_os_fs.h b/adf/include/os/adf_os_fs.h
+index fb0d1c7..e1367be 100644
+--- a/adf/include/os/adf_os_fs.h
++++ b/adf/include/os/adf_os_fs.h
+@@ -28,7 +28,7 @@
+  */
+ extern int __ahdecl adf_os_fs_read(char *filename, 
+                                    loff_t offset, 
+-                                   unsigned int size, 
++                                   unsigned int *size,
+                                    unsigned char *buffer);
+ 
+ #endif /*__ADF_OS_FS_H__*/
+diff --git a/adf/include/os/adf_os_types.h b/adf/include/os/adf_os_types.h
+index 9fd9550..2a29de8 100644
+--- a/adf/include/os/adf_os_types.h
++++ b/adf/include/os/adf_os_types.h
+@@ -91,30 +91,6 @@ typedef __adf_os_dma_size_t     adf_os_dma_size_t;
+ typedef __adf_os_dma_context_t  adf_os_dma_context_t;
+ 
+ /**
+- * @brief Information inside a DMA map.
+- */ 
+-typedef struct adf_os_dmamap_info{
+-    a_uint32_t                  nsegs;      /**< total number mapped segments*/
+-    struct __dma_segs{
+-        adf_os_dma_addr_t       paddr;      /**< physical(dma'able) address of the segment*/
+-        adf_os_dma_size_t       len;        /**< length of the segment*/
+-    } dma_segs[ADF_OS_MAX_SCATTER]; 
+-
+-}adf_os_dmamap_info_t;
+-
+-/**
+- * @brief Representation of a scatter-gather list.
+- */ 
+-typedef struct adf_os_sglist{
+-    a_uint32_t                  nsegs;      /**< total number of segments*/
+-    struct __sg_segs{
+-        a_uint8_t              *vaddr;      /**< Virtual address of the segment*/
+-        a_uint32_t              len;        /**< Length of the segment*/
+-    } sg_segs[ADF_OS_MAX_SGLIST];
+-
+-}adf_os_sglist_t;
+-
+-/**
+  *  @brief All operations specified below are performed from
+  *  the host memory point of view, where a read
+  *  implies data coming from the device to the host
+diff --git a/adf/nbuf/linux/adf_nbuf.c b/adf/nbuf/linux/adf_nbuf.c
+index 8d12ee8..57e8645 100644
+--- a/adf/nbuf/linux/adf_nbuf.c
++++ b/adf/nbuf/linux/adf_nbuf.c
+@@ -398,56 +398,6 @@ __adf_nbuf_unmap_nbytes_single(
+ #endif
+ }
+ 
+-/**
+- * @brief return the dma map info
+- *
+- * @param[in]  bmap
+- * @param[out] sg (map_info ptr)
+- */
+-void
+-__adf_nbuf_dmamap_info(__adf_os_dma_map_t bmap, adf_os_dmamap_info_t *sg)
+-{
+-    adf_os_assert(bmap->mapped);
+-    adf_os_assert(bmap->nsegs <= ADF_OS_MAX_SCATTER);
+-
+-    memcpy(sg->dma_segs, bmap->seg, bmap->nsegs *
+-           sizeof(struct __adf_os_segment));
+-    sg->nsegs = bmap->nsegs;
+-}
+-/**
+- * @brief return the frag data & len, where frag no. is
+- *        specified by the index
+- *
+- * @param[in] buf
+- * @param[out] sg (scatter/gather list of all the frags)
+- *
+- */
+-void
+-__adf_nbuf_frag_info(struct sk_buff *skb, adf_os_sglist_t  *sg)
+-{
+-#if defined(ADF_OS_DEBUG) || defined(__ADF_SUPPORT_FRAG_MEM)
+-    struct skb_shared_info  *sh = skb_shinfo(skb);
+-#endif
+-    adf_os_assert(skb != NULL);
+-    sg->sg_segs[0].vaddr = skb->data;
+-    sg->sg_segs[0].len   = skb->len;
+-    sg->nsegs            = 1;
+-
+-#ifndef __ADF_SUPPORT_FRAG_MEM
+-    adf_os_assert(sh->nr_frags == 0);
+-#else
+-    for(int i = 1; i <= sh->nr_frags; i++) {
+-        skb_frag_t    *f        = &sh->frags[i - 1];
+-        sg->sg_segs[i].vaddr    = (uint8_t *)(page_address(f->page) +
+-                                  f->page_offset);
+-        sg->sg_segs[i].len      = f->size;
+-
+-        adf_os_assert(i < ADF_OS_MAX_SGLIST);
+-    }
+-    sg->nsegs += i;
+-#endif
+-}
+-
+ a_status_t
+ __adf_nbuf_set_rx_cksum(struct sk_buff *skb, adf_nbuf_rx_cksum_t *cksum)
+ {
+@@ -568,7 +518,6 @@ EXPORT_SYMBOL(__adf_nbuf_alloc);
+ EXPORT_SYMBOL(__adf_nbuf_free);
+ EXPORT_SYMBOL(__adf_nbuf_ref);
+ EXPORT_SYMBOL(__adf_nbuf_shared);
+-EXPORT_SYMBOL(__adf_nbuf_frag_info);
+ EXPORT_SYMBOL(__adf_nbuf_dmamap_create);
+ EXPORT_SYMBOL(__adf_nbuf_dmamap_destroy);
+ EXPORT_SYMBOL(__adf_nbuf_map);
+@@ -579,7 +528,6 @@ EXPORT_SYMBOL(__adf_nbuf_map_single);
+ EXPORT_SYMBOL(__adf_nbuf_map_nbytes_single);
+ EXPORT_SYMBOL(__adf_nbuf_unmap_single);
+ EXPORT_SYMBOL(__adf_nbuf_unmap_nbytes_single);
+-EXPORT_SYMBOL(__adf_nbuf_dmamap_info);
+ EXPORT_SYMBOL(__adf_nbuf_set_rx_cksum);
+ EXPORT_SYMBOL(__adf_nbuf_get_tx_cksum);
+ EXPORT_SYMBOL(__adf_nbuf_get_vlan_info);
+diff --git a/adf/nbuf/linux/adf_nbuf_pvt.h b/adf/nbuf/linux/adf_nbuf_pvt.h
+index 25ce966..9787a08 100644
+--- a/adf/nbuf/linux/adf_nbuf_pvt.h
++++ b/adf/nbuf/linux/adf_nbuf_pvt.h
+@@ -24,7 +24,9 @@
+ #include <linux/netdevice.h>
+ #include <linux/dma-mapping.h>
+ #include <asm/types.h>
++#if LINUX_VERSION_CODE  < KERNEL_VERSION(4,0,0)
+ #include <asm/scatterlist.h>
++#endif
+ #include <adf_os_types.h>
+ #include <linux/tcp.h>
+ 
+@@ -341,8 +343,6 @@ void            __adf_nbuf_unmap_single(__adf_os_device_t osdev,
+                     struct sk_buff *skb, adf_os_dma_dir_t dir);
+ void            __adf_nbuf_unmap_nbytes_single(__adf_os_device_t osdev,
+                     struct sk_buff *skb, adf_os_dma_dir_t dir,int nbytes);
+-void            __adf_nbuf_dmamap_info(__adf_os_dma_map_t bmap, adf_os_dmamap_info_t *sg);
+-void            __adf_nbuf_frag_info(struct sk_buff *skb, adf_os_sglist_t  *sg);
+ void            __adf_nbuf_dmamap_set_cb(__adf_os_dma_map_t dmap, void *cb, void *arg);
+ a_status_t      __adf_nbuf_frag_map(__adf_os_device_t osdev,
+                     struct sk_buff *skb, int offset, adf_os_dma_dir_t dir, int cur_frag);
+diff --git a/adf/net/linux/adf_net.c b/adf/net/linux/adf_net.c
+index 1a4cccf..cc094f2 100644
+--- a/adf/net/linux/adf_net.c
++++ b/adf/net/linux/adf_net.c
+@@ -35,11 +35,13 @@
+ #if defined (__LINUX_MIPS32_ARCH__) || defined (__LINUX_MIPS64_ARCH__)
+ #include <asm/dec/system.h>
+ #else
+-#if !defined ( __i386__) && !defined (__LINUX_POWERPC_ARCH__)
++#ifndef __i386__
++#if LINUX_VERSION_CODE  < KERNEL_VERSION(4,0,0)
+ #include <asm/system.h>
+ #endif
+ #endif
+ #endif
++#endif
+ 
+ #include <linux/netdevice.h>
+ #include <linux/stddef.h>
+@@ -288,11 +290,14 @@ __adf_net_vlan_del(struct net_device  *dev,
+ uint32_t
+ __adf_net_get_vlantag(struct sk_buff *skb)
+ {
+-
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,0,0)
+     if(!vlan_tx_tag_present(skb))
+         return A_STATUS_ENOTSUPP;
+ 
+     return vlan_tx_tag_get(skb);
++#else
++    return 0;
++#endif
+ }
+ EXPORT_SYMBOL(__adf_net_get_vlantag);
+ 
+@@ -370,7 +375,7 @@ __adf_net_set_vapaddr(struct net_device *netdev, void *addr)
+     return error;
+ 
+ }
+-#define __adf_net_iwget_wifi()      NULL
++#define __adf_net_iwget_wifi(n)      NULL
+ #define __adf_net_iwget_vap()       NULL
+ 
+ #else
+@@ -382,7 +387,7 @@ extern  int __adf_net_vap_ioctl(struct net_device *netdev, struct ifreq *ifr,
+                                 int cmd);
+ extern  int __adf_net_eth_ioctl(struct net_device *netdev, struct ifreq *ifr, 
+                                 int cmd);
+-struct iw_handler_def *     __adf_net_iwget_wifi(void);
++struct iw_handler_def *     __adf_net_iwget_wifi(char *name);
+ struct iw_handler_def *     __adf_net_iwget_vap(void);
+ #endif
+ 
+@@ -444,8 +449,13 @@ __adf_net_create_wifidev(adf_drv_handle_t        hdl, adf_dev_sw_t   *op,
+     struct net_device  *netdev  = NULL;
+     int                 error   = 0;
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,0,0) 
+     netdev = alloc_netdev(sizeof(struct __adf_softc), info->if_name,
+                           ether_setup);
++#else
++    netdev = alloc_netdev(sizeof(struct __adf_softc), info->if_name, NET_NAME_ENUM,
++                          ether_setup);
++#endif
+     
+     if (!netdev) return NULL;
+ 
+@@ -472,7 +482,7 @@ __adf_net_create_wifidev(adf_drv_handle_t        hdl, adf_dev_sw_t   *op,
+     
+     netdev->destructor          = __adf_net_free_netdev;
+     netdev->hard_header_len     = info->header_len ;
+-    netdev->wireless_handlers   = __adf_net_iwget_wifi();
++    netdev->wireless_handlers   = __adf_net_iwget_wifi(info->if_name);
+     netdev->type                = ARPHRD_IEEE80211; /* WLAN device */
+ 
+     adf_os_assert(is_valid_ether_addr(info->dev_addr));
+@@ -510,8 +520,13 @@ __adf_net_create_vapdev(adf_drv_handle_t        hdl, adf_dev_sw_t   *op,
+     struct net_device  *netdev  = NULL;
+     int                 error   = 0;
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,0,0) 
+     netdev = alloc_netdev(sizeof(struct __adf_softc), info->if_name,
+                           ether_setup);
++#else
++    netdev = alloc_netdev(sizeof(struct __adf_softc), info->if_name, NET_NAME_ENUM,
++                          ether_setup);
++#endif
+     
+     if (!netdev) return NULL;
+ 
+@@ -600,9 +615,14 @@ __adf_net_create_ethdev(adf_drv_handle_t        hdl, adf_dev_sw_t   *op,
+     __adf_softc_t      *sc      = NULL;
+     struct net_device  *netdev  = NULL;
+     int                 error   = 0;
+-
++    
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,0,0) 
+     netdev = alloc_netdev(sizeof(struct __adf_softc), info->if_name,
+                           ether_setup);
++#else
++    netdev = alloc_netdev(sizeof(struct __adf_softc), info->if_name, NET_NAME_ENUM,
++                          ether_setup);
++#endif
+     
+     if (!netdev) return NULL;
+ 
+diff --git a/adf/net/linux/adf_net_event.c b/adf/net/linux/adf_net_event.c
+index 655683f..6eae69a 100644
+--- a/adf/net/linux/adf_net_event.c
++++ b/adf/net/linux/adf_net_event.c
+@@ -30,9 +30,10 @@
+ #include <adf_os_mem.h>
+ #include <adf_os_trace.h>
+ 
++#include <ieee80211_external_config.h>
+ #include <acfg_api_types.h>
+ #include <acfg_event_types.h>
+-#include <acfg_drv_if.h>
++//#include <acfg_drv_if.h>
+ 
+ /** 
+  * IW Events
+@@ -182,8 +183,12 @@ int ev_fill_info(struct sk_buff * skb, struct net_device *dev, \
+     /* Add the event in the netlink packet */
+     if (unlikely(nla_put(skb, IFLA_WIRELESS, sizeof(acfg_os_event_t) , event) < 0))
+         goto nla_put_failure;
+-
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,0,0)
++    nlmsg_end(skb, nlh);
++    return skb->len;
++#else
+     return nlmsg_end(skb, nlh);
++#endif
+ 
+ nla_put_failure:
+     nlmsg_cancel(skb, nlh);
+diff --git a/adf/net/linux/adf_net_ioctl.c b/adf/net/linux/adf_net_ioctl.c
+index 9db7706..2696e67 100644
+--- a/adf/net/linux/adf_net_ioctl.c
++++ b/adf/net/linux/adf_net_ioctl.c
+@@ -21,8 +21,10 @@
+ #include <linux/vmalloc.h>
+ #include <adf_net.h>
+ 
++#include <ieee80211_external_config.h>
+ #include <acfg_api_types.h>
+-#include <acfg_drv_if.h>
++
++//#include <atd_cmd.h>
+ 
+ #include <adf_os_mem_pvt.h>
+ #include <adf_os_mem.h>
+@@ -108,10 +110,11 @@ PROTO_WIOCTL(set_vap_p2p_param);
+ PROTO_WIOCTL(get_vap_p2p_param);
+ PROTO_WIOCTL(set_hwaddr);
+ /* tx99tool */
+-PROTO_WIOCTL(tx99tool);
++//PROTO_WIOCTL(tx99tool);
+ /* nawds config */
+-PROTO_WIOCTL(config_nawds);
++//PROTO_WIOCTL(config_nawds);
+ /* security handlers */
++#if 0
+ PROTO_WIOCTL(wsupp_init);
+ PROTO_WIOCTL(wsupp_fini);
+ PROTO_WIOCTL(wsupp_if_add);
+@@ -123,6 +126,7 @@ PROTO_WIOCTL(wsupp_nw_get);
+ PROTO_WIOCTL(wsupp_nw_list);
+ PROTO_WIOCTL(wsupp_wps_req);
+ PROTO_WIOCTL(wsupp_set);
++#endif
+ PROTO_WIOCTL(doth_chswitch);
+ PROTO_WIOCTL(addmac);
+ PROTO_WIOCTL(delmac);
+@@ -164,7 +168,7 @@ const __wioctl_fn_t   __wioctl_sw[] = {
+     REQ_NUM(ACFG_REQ_GET_RADIO_PARAM)   = __wioctl_get_radio_param,
+     REQ_NUM(ACFG_REQ_SET_REG)           = __wioctl_set_reg,
+     REQ_NUM(ACFG_REQ_GET_REG)           = __wioctl_get_reg,
+-    REQ_NUM(ACFG_REQ_TX99TOOL)          = __wioctl_tx99tool,
++    //    REQ_NUM(ACFG_REQ_TX99TOOL)          = __wioctl_tx99tool,
+     REQ_NUM(ACFG_REQ_SET_HW_ADDR)       = __wioctl_set_hwaddr,
+     REQ_NUM(ACFG_REQ_GET_ATHSTATS)      = __wioctl_get_ath_stats,
+     REQ_NUM(ACFG_REQ_CLR_ATHSTATS)      = __wioctl_clr_ath_stats,
+@@ -218,8 +222,9 @@ const __wioctl_fn_t   __wioctl_sw[] = {
+     REQ_NUM(ACFG_REQ_GET_RSSI)          = __wioctl_get_rssi,
+     REQ_NUM(ACFG_REQ_GET_TESTMODE)      = __wioctl_get_testmode,
+     REQ_NUM(ACFG_REQ_SET_TESTMODE)      = __wioctl_set_testmode,
+-    REQ_NUM(ACFG_REQ_NAWDS_CONFIG)      = __wioctl_config_nawds,
++    //    REQ_NUM(ACFG_REQ_NAWDS_CONFIG)      = __wioctl_config_nawds,
+     REQ_NUM(ACFG_REQ_GET_CUSTDATA)      = __wioctl_get_custdata,
++#if 0
+     REQ_NUM(ACFG_REQ_WSUPP_INIT)        = __wioctl_wsupp_init,
+     REQ_NUM(ACFG_REQ_WSUPP_FINI)        = __wioctl_wsupp_fini,
+     REQ_NUM(ACFG_REQ_WSUPP_IF_ADD)      = __wioctl_wsupp_if_add,
+@@ -231,6 +236,7 @@ const __wioctl_fn_t   __wioctl_sw[] = {
+     REQ_NUM(ACFG_REQ_WSUPP_NW_LIST)     = __wioctl_wsupp_nw_list,
+     REQ_NUM(ACFG_REQ_WSUPP_WPS_REQ)     = __wioctl_wsupp_wps_req,
+     REQ_NUM(ACFG_REQ_WSUPP_SET)         = __wioctl_wsupp_set,
++#endif
+     REQ_NUM(ACFG_REQ_DOTH_CHSWITCH)     = __wioctl_doth_chswitch,
+     REQ_NUM(ACFG_REQ_ADDMAC)            = __wioctl_addmac,
+     REQ_NUM(ACFG_REQ_DELMAC)            = __wioctl_delmac,
+@@ -250,18 +256,18 @@ const __wioctl_fn_t   __wioctl_sw[] = {
+     REQ_NUM(ACFG_REQ_SET_VAP_P2P_PARAM) = __wioctl_set_vap_p2p_param,
+     REQ_NUM(ACFG_REQ_DBGREQ)            = __wioctl_dbgreq,
+     REQ_NUM(ACFG_REQ_ACL_ADDMAC)	= __wioctl_acl_addmac,
+-    REQ_NUM(ACFG_REQ_ACL_GETMAC)	= __wioctl_acl_getmac,
+-    REQ_NUM(ACFG_REQ_ACL_DELMAC)	= __wioctl_acl_delmac,
+     REQ_NUM(ACFG_REQ_ACL_ADDMAC_SEC)    = __wioctl_acl_addmac_sec,
+     REQ_NUM(ACFG_REQ_ACL_DELMAC_SEC)    = __wioctl_acl_delmac_sec,
++    REQ_NUM(ACFG_REQ_ACL_GETMAC)	= __wioctl_acl_getmac,
++    REQ_NUM(ACFG_REQ_ACL_DELMAC)	= __wioctl_acl_delmac,
+     REQ_NUM(ACFG_REQ_IS_OFFLOAD_VAP)	= __wioctl_is_offload_vap,
+     REQ_NUM(ACFG_REQ_SET_CHNWIDTHSWITCH)= __wioctl_set_chn_widthswitch,
+     REQ_NUM(ACFG_REQ_SET_ATF_ADDSSID) =  __wioctl_set_atf_addssid,
+     REQ_NUM(ACFG_REQ_SET_ATF_DELSSID) =  __wioctl_set_atf_delssid,
+     REQ_NUM(ACFG_REQ_SET_ATF_ADDSTA) =  __wioctl_set_atf_addsta,
+     REQ_NUM(ACFG_REQ_SET_ATF_DELSTA) =  __wioctl_set_atf_delsta,
+-    REQ_NUM(ACFG_REQ_MON_ADDMAC)    = __wioctl_mon_addmac,
+-    REQ_NUM(ACFG_REQ_MON_DELMAC)    = __wioctl_mon_delmac,
++    //    REQ_NUM(ACFG_REQ_MON_ADDMAC)    = __wioctl_mon_addmac,
++    //    REQ_NUM(ACFG_REQ_MON_DELMAC)    = __wioctl_mon_delmac,
+     /* <add here> */
+     REQ_NUM(ACFG_REQ_LAST_VAP)          = 0, /* Last VAP entry */
+ };
+@@ -593,8 +599,8 @@ __wioctl_set_freq(__adf_softc_t *sc, acfg_data_t *data)
+ {
+     a_status_t       status = A_STATUS_EINVAL;
+     
+-    adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): mantissa = %d ; exponent = %d\n",\
+-            __FUNCTION__,data->freq.m,data->freq.e);
++    adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): freq = %d\n",\
++            __FUNCTION__,data->freq);
+ 
+     if(!sc2vap_cfg(sc)->set_freq)
+         return A_STATUS_ENOTSUPP ;
+@@ -1860,7 +1866,7 @@ __wioctl_set_vap_p2p_param(__adf_softc_t *sc, acfg_data_t *data)
+ 
+     return status;
+ }
+-
++#if 0
+ static a_status_t
+ __wioctl_mon_delmac(__adf_softc_t *sc, acfg_data_t *data)
+ {
+@@ -1890,7 +1896,7 @@ __wioctl_mon_addmac(__adf_softc_t *sc, acfg_data_t *data)
+ 
+     return status;
+ }
+-
++#endif
+ static a_status_t 
+ __wioctl_acl_addmac(__adf_softc_t *sc, acfg_data_t *data)
+ {
+@@ -2085,6 +2091,7 @@ __wioctl_get_wlan_profile(__adf_softc_t *sc, acfg_data_t *data)
+ static a_status_t
+ __wioctl_get_assoc_sta_info(__adf_softc_t *sc, acfg_data_t *data)
+ {
++#if 0
+     void *buff = NULL ;
+     a_status_t status = A_STATUS_FAILED;
+     a_uint32_t retlen = 0, ret;
+@@ -2175,9 +2182,12 @@ fail:
+     vfree(buff) ;
+     vfree(pinfo) ;
+     return status;
++#else
++    return 0;
++#endif
+ }
+ 
+-
++#if 0
+ /**
+  * @brief tx99tool
+  * 
+@@ -2488,7 +2498,7 @@ __wioctl_wsupp_set(__adf_softc_t *sc, acfg_data_t *data)
+ 	
+     return status;
+ }
+-
++#endif
+ 
+ /** 
+  * @brief Switch the channel
+@@ -2685,7 +2695,7 @@ done:
+  * ****************************************************
+  */
+ 
+-
++#if 0
+ /* 
+  * Copied from ieee80211_ioctl.h (wlanconfig).
+ */
+@@ -2702,7 +2712,7 @@ struct wcfg_clone_params {
+                                            beacon timers */
+ #define WCFG_CLONE_WDS         0x0004   /* enable WDS processing */
+ #define WCFG_CLONE_WDSLEGACY   0x0008   /* legacy WDS operation */
+-
++#endif
+ 
+ 
+ /** 
+@@ -2832,17 +2842,18 @@ done:
+ static int 
+ __adf_net_wifi_create_vap( struct net_device *netdev, struct ifreq *ifr)
+ {
+-    struct wcfg_clone_params    user    = {{0}};
+-    acfg_vapinfo_t              local   = {0};
++    struct ieee80211_clone_params    user    = {{0}};
++    acfg_vapinfo_t              local = {{0}};
+     __adf_softc_t              *sc      = netdev_to_softc(netdev);
+     a_status_t                  error   = A_STATUS_EINVAL;
+ 
+-    if(copy_from_user(&user, ifr->ifr_data, sizeof(struct wcfg_clone_params)))
++    if(copy_from_user(&user, ifr->ifr_data, sizeof(struct ieee80211_clone_params)))
+         goto done ;
+     
+-    adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): Vap Create - %s on %s \n", 
+-              __FUNCTION__, user.icp_name, netdev->name);
++    adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): Vap Create - %s on %s flags %d \n", 
++              __FUNCTION__, user.icp_name, netdev->name, user.icp_flags);
+ 
++    memset(&local, 0, sizeof(acfg_vapinfo_t));
+     local.icp_opmode    = user.icp_opmode ;
+     local.icp_flags     = user.icp_flags ;
+     memcpy(local.icp_name, user.icp_name, ACFG_MAX_IFNAME);
+@@ -3096,13 +3107,14 @@ static int
+ __adf_net_vap_delete( struct net_device *netdev, struct ifreq *ifr)
+ {
+     __adf_softc_t *sc = netdev_to_softc(netdev);
+-    acfg_vapinfo_t      local   = {0};
++    acfg_vapinfo_t      local = {{0}};
+     a_status_t          error   = A_STATUS_FAILED;
+ 
++    memset(&local, 0, sizeof(acfg_vapinfo_t));
+     memcpy(local.icp_name, ifr->ifr_ifrn.ifrn_name, ACFG_MAX_IFNAME);
+ 
+     /* truncate */
+-    local.icp_name[ACFG_MAX_IFNAME] = '\0';
++    local.icp_name[ACFG_MAX_IFNAME-1] = '\0';
+ 
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): Vap Delete - %s \n", 
+               __FUNCTION__, local.icp_name );
+@@ -3238,21 +3250,9 @@ done:
+ static int 
+ __adf_net_vap_config_nawds( struct net_device *netdev, struct ifreq *ifr)
+ {
+-    __adf_softc_t *sc = netdev_to_softc(netdev);
+-    acfg_nawds_cfg_t    local   = {0};
+-    a_status_t          error   = A_STATUS_ENOMEM;
+-
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s():nawds_config\n", __FUNCTION__);
+ 
+-    if (copy_from_user(&local, ifr->ifr_data, sizeof(struct acfg_nawds_cfg)))
+-        goto done;
+-    
+-    error = __wioctl_sw[ACFG_REQ_NAWDS_CONFIG](sc, (acfg_data_t *)&local);
+-
+-    if(copy_to_user(ifr->ifr_data, &local, sizeof(struct acfg_nawds_cfg)))
+-        error = A_STATUS_ENOMEM;
+-done:
+-    return __a_status_to_os(error) ;
++    return __a_status_to_os(A_STATUS_OK) ;
+ }
+ 
+ /** 
+diff --git a/adf/net/linux/adf_net_pvt.h b/adf/net/linux/adf_net_pvt.h
+index f3d26bc..7fa5e90 100644
+--- a/adf/net/linux/adf_net_pvt.h
++++ b/adf/net/linux/adf_net_pvt.h
+@@ -43,6 +43,8 @@
+ #define ADF_NET_ETHERNET_FCS_SIZE   4
+ #define ADF_MAX_WPS_CALLBACKS       10
+ 
++#define ADF_VAP_GET_IFINDEX(v)    ((__adf_softc_t *)(v))->netdev->ifindex
++
+ /**
+  * This is a per driver structure, that holds info about an adf_drv that has
+  * registered with anet. This will be used to lookup the details when a probe
+@@ -430,8 +432,10 @@ __adf_mhz2ieee(a_uint32_t freq) ;
+ #define IEEE80211_IOC_P2P_SEND_ACTION       643
+ #define IEEE80211_IOC_P2P_FETCH_FRAME       645
+ #define IEEE80211_IOC_P2P_NOA_INFO          648
++#define IEEE80211_IOC_P2P_FIND_BEST_CHANNEL 649
++#define IEEE80211_IOC_P2P_FRAME_LIST_EMPTY  652
+ 
+-
++#if 0
+ /* kev event_code value for Atheros IEEE80211 events */
+ #define     IEEE80211_EV_SCAN_DONE                      0 
+ #define     IEEE80211_EV_CHAN_START                     1 
+@@ -455,7 +459,7 @@ __adf_mhz2ieee(a_uint32_t freq) ;
+ #define     IEEE80211_EV_DEAUTH_IND_AP 				    19
+ #define     IEEE80211_EV_DISASSOC_IND_AP 				20
+ #define     IEEE80211_EV_WAPI			21
+-	
++#endif	
+ 
+ 
+ #endif /*__ADF_NET_PVT_H*/
+diff --git a/adf/net/linux/adf_net_wext.c b/adf/net/linux/adf_net_wext.c
+index bf152ae..67632ee 100644
+--- a/adf/net/linux/adf_net_wext.c
++++ b/adf/net/linux/adf_net_wext.c
+@@ -24,12 +24,13 @@
+ 
+ #include <adf_net.h>
+ #include <adf_os_mem.h>
++#include <ieee80211_external_config.h>
+ #include <acfg_api_types.h>
+-#include <acfg_drv_if.h>
++//#include <acfg_drv_if.h>
+ 
+ #include<adf_os_trace.h>
+ #include<adf_net_wext_pvt.h>
+-
++#include<ieee80211.h>
+ 
+ /**
+  * @brief Linux Wireless Extention
+@@ -498,7 +499,7 @@ static const iw_handler     __wpriv_handlers_vap[] = {
+     WPRIV_IDX(29) = __wpriv_get_mac_address,
+ };
+ 
+-static const struct iw_priv_args __wpriv_args_radio[] = {
++static const struct iw_priv_args __wpriv_args_radio_ol[] = {
+     /*
+     WPRIV_PARAM_INT_SET(IEEE80211_IOCTL_SETPARAM, "setparam"),
+     WPRIV_PARAM_INT_GET(IEEE80211_IOCTL_GETPARAM, "getparam"),
+@@ -595,6 +596,8 @@ static const struct iw_priv_args __wpriv_args_radio[] = {
+     WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_GP_AVG_INTERVAL ,"gp_avg_intrvl" ),
+     WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_GP_AVG_INTERVAL ,"g_gp_avg_intrvl" ),
+     WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_ENABLE_BK_SCANTIMER,"acs_bkscanen" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_TXPOWER_SCALE_OL,"tpscale" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_TXPOWER_SCALE_OL,"get_tpscale" ),
+     WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_ENABLE_BK_SCANTIMER,"g_acs_bkscanen" ),
+     WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_SCANTIME,"acs_scanintvl" ),
+     WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_SCANTIME,"g_acsscanintvl"),
+@@ -640,6 +643,151 @@ static const struct iw_priv_args __wpriv_args_radio[] = {
+     WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_ENABLEADAPTIVECCATHRES, "GetCCAThEna"),
+ };
+ 
++
++static const struct iw_priv_args __wpriv_args_radio_da[] = {
++    /*
++    WPRIV_PARAM_INT_SET(IEEE80211_IOCTL_SETPARAM, "setparam"),
++    WPRIV_PARAM_INT_GET(IEEE80211_IOCTL_GETPARAM, "getparam"),
++    */
++
++    { LINUX_WPRIV_IOCTL_SETCOUNTRY, IW_PRIV_TYPE_CHAR | 3, 0,       "setCountry" },
++
++    /* sub-ioctl handlers */
++    WPRIV_PARAM_INT_SET(LINUX_WPRIV_IOCTL_SETPARAM, ""),
++    WPRIV_PARAM_INT_GET(LINUX_WPRIV_IOCTL_GETPARAM, ""),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_AMPDU, "AMPDU"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_AMPDU, "getAMPDU"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_AMPDU_LIMIT, "AMPDULim"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_AMPDU_LIMIT, "getAMPDULim"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_AMPDU_SUBFRAMES, "AMPDUFrames"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_AMPDU_SUBFRAMES, "getAMPDUFrames"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_AMPDU_RX_BSIZE, "AMPDURxBsize"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_AMPDU_RX_BSIZE, "getAMPDURxBsize"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_AGGR_BURST, "burst"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_AGGR_BURST, "get_burst"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_AGGR_BURST_DUR, "burst_dur"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_AGGR_BURST_DUR, "get_burst_dur"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_TXCHAINMASK, "txchainmask"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_TXCHAINMASK, "get_txchainmask"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_RXCHAINMASK, "rxchainmask"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_RXCHAINMASK, "get_rxchainmask"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_TXCHAINMASK_LEGACY, "tx_cm_legacy"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_TXCHAINMASK_LEGACY, "g_tx_cm_legacy"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_RXCHAINMASK_LEGACY, "rx_cm_legacy"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_RXCHAINMASK_LEGACY, "g_rx_cm_legacy"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ATH_DEBUG, "ATHDebug"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ATH_DEBUG, "getATHDebug"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_GPIO_LED_CUSTOM, "set_ledcustom"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_GPIO_LED_CUSTOM, "get_ledcustom"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SWAP_DEFAULT_LED, "set_swapled"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SWAP_DEFAULT_LED, "get_swapled"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_VOWEXT, "setVowExt"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_VOWEXT, "getVowExt"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_RCA, "set_rcaparam"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_RCA, "get_rcaparam"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_VSP_ENABLE, "set_vsp_enable"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_VSP_ENABLE, "get_vsp_enable"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_VSP_THRESHOLD, "set_vsp_thresh"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_VSP_THRESHOLD, "get_vsp_thresh"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_VSP_EVALINTERVAL, "set_vsp_evaldur"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_VSP_EVALINTERVAL, "get_vsp_evaldur"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_VOWEXT_STATS, "setVowExtStats"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_VOWEXT_STATS, "getVowExtStats"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_DCS_ENABLE, "dcs_enable"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_DCS_ENABLE, "get_dcs_enable"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_DCS_COCH, "set_dcs_intrth"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_DCS_COCH, "get_dcs_intrth"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_DCS_TXERR, "set_dcs_errth"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_DCS_TXERR, "get_dcs_errth"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_DCS_PHYERR, "s_dcs_phyerrth"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_DCS_PHYERR, "g_dcs_phyerrth"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_PHYRESTART_WAR, "s_PhyRestartWar"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_PHYRESTART_WAR, "g_PhyRestartWar"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_KEYSEARCH_ALWAYS_WAR, "s_KeySrchAlways"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_KEYSEARCH_ALWAYS_WAR, "g_KeySrchAlways"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_COUNTRYID, "setCountryID"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_COUNTRYID, "getCountryID"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_NODEBUG, "disablestats"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_FW_HANG_ID, "set_fw_hang"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_FW_RECOVERY_ID, "set_fw_recovery"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_FW_RECOVERY_ID, "get_fw_recovery"),
++
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_DYN_TX_CHAINMASK, "dyntxchain"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_DYN_TX_CHAINMASK, "get_dyntxchain"),
++
++    /* SmartAntenna */
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANTENNA, "setSmartAntenna"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANTENNA, "getSmartAntenna"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_TRAIN_MODE, "ant_trainmode"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_TRAIN_MODE, "g_ant_trainmode"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_TRAIN_TYPE, "ant_traintype" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_TRAIN_TYPE, "g_ant_traintype"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_PKT_LEN, "ant_pktlen"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_PKT_LEN, "getant_pktlen"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_NUM_PKTS, "ant_numpkts"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_NUM_PKTS, "getant_numpkts"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_TRAIN_START, "ant_train"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_TRAIN_START, "getant_train"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_NUM_ITR ,"ant_numitr" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_NUM_ITR ,"getant_numitr" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN_THRESH,"train_threshold" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN_THRESH,"get_tthreshold" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN_INTERVAL,"ret_interval" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN_INTERVAL,"get_retinterval" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN_DROP,"retrain_drop" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN_DROP,"get_retindrop" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_MIN_GP_THRESH ,"train_min_thrs" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_MIN_GP_THRESH ,"getrt_min_thrs" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_GP_AVG_INTERVAL ,"gp_avg_intrvl" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_GP_AVG_INTERVAL ,"g_gp_avg_intrvl" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_ENABLE_BK_SCANTIMER,"acs_bkscanen" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_ENABLE_BK_SCANTIMER,"g_acs_bkscanen" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_TXPOWER_SCALE_DA,"tpscale" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_TXPOWER_SCALE_DA,"get_tpscale" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_SCANTIME,"acs_scanintvl" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_SCANTIME,"g_acsscanintvl"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_RSSIVAR,"acs_rssivar"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_RSSIVAR,"get_acs_rssivar"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_CHLOADVAR,"acs_chloadvar"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_CHLOADVAR,"g_acschloadvar"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_LIMITEDOBSS,"acs_lmtobss"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_LIMITEDOBSS,"get_acslmtobss"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_CTRLFLAG,"acs_ctrlflags"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_CTRLFLAG,"g_acsctrlflags"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_ACS_DEBUGTRACE,"acs_dbgtrace"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_ACS_DEBUGTRACE,"g_acs_dbgtrace"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_CURRENT_ANT ,"current_ant" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_CURRENT_ANT ,"getcurrent_ant" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_DEFAULT_ANT ,"default_ant" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_DEFAULT_ANT ,"getdefault_ant" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_TRAFFIC_GEN_TIMER ,"traffic_timer"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_TRAFFIC_GEN_TIMER ,"gtraffic_timer" ),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN ,"ant_retrain" ),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_RADIO_SMARTANT_RETRAIN ,"getant_retrain" ),
++
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_FORCEBIASAUTO, "ForBiasAuto"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_FORCEBIASAUTO, "GetForBiasAuto"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_DEBUG, "HALDbg"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_DEBUG, "GetHALDbg"),
++
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_CRDC_ENABLE, "crdcEnable"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_CRDC_ENABLE, "getcrdcEnable"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_CRDC_WINDOW, "crdcWindow"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_CRDC_WINDOW, "getcrdcWindow"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_CRDC_RSSITHRESH, "crdcRssith"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_CRDC_RSSITHRESH, "getcrdcRssith"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_CRDC_DIFFTHRESH, "crdcDiffth"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_CRDC_DIFFTHRESH, "getcrdcDiffth"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_CRDC_NUMERATOR, "crdcNum"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_CRDC_NUMERATOR, "getcrdcNum"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_CRDC_DENOMINATOR, "crdcDenom"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_CRDC_DENOMINATOR, "getcrdcDenom"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_PRINT_BBDEBUG, "printBBDebug"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_PRINT_BBDEBUG, "g_printBBDebug"),
++    WPRIV_PARAM_INT_SET(ACFG_PARAM_HAL_CONFIG_ENABLEADAPTIVECCATHRES, "CCAThEna"),
++    WPRIV_PARAM_INT_GET(ACFG_PARAM_HAL_CONFIG_ENABLEADAPTIVECCATHRES, "GetCCAThEna"),
++};
++
+ static const iw_handler     __wpriv_handlers_radio[] = {
+     WPRIV_IDX(0)     = __wpriv_set_param_radio,
+     WPRIV_IDX(1)     = __wpriv_get_param_radio,
+@@ -649,13 +797,23 @@ static const iw_handler     __wpriv_handlers_radio[] = {
+ 
+ 
+ #define NUM(a)    (sizeof (a) / sizeof (a[0]))
+-struct iw_handler_def __w_handler_def_radio = {
++struct iw_handler_def __w_handler_def_radio_da = {
+     .standard           = NULL,
+     .num_standard       = 0,
+     .private            = __wpriv_handlers_radio,
+     .num_private        = NUM(__wpriv_handlers_radio),
+-    .private_args       = __wpriv_args_radio,
+-    .num_private_args   = NUM(__wpriv_args_radio),
++    .private_args       = __wpriv_args_radio_da,
++    .num_private_args   = NUM(__wpriv_args_radio_da),
++    /* .get_wireless_stats = __wext_getstats, */
++};
++
++struct iw_handler_def __w_handler_def_radio_ol = {
++    .standard           = NULL,
++    .num_standard       = 0,
++    .private            = __wpriv_handlers_radio,
++    .num_private        = NUM(__wpriv_handlers_radio),
++    .private_args       = __wpriv_args_radio_ol,
++    .num_private_args   = NUM(__wpriv_args_radio_ol),
+     /* .get_wireless_stats = __wext_getstats, */
+ };
+ 
+@@ -677,9 +835,14 @@ extern const __wioctl_fn_t   __wioctl_sw[];
+  * @brief Get Wifi Wireless handlers
+  */
+ struct iw_handler_def *
+-__adf_net_iwget_wifi(void)
++__adf_net_iwget_wifi(char *name)
+ {
+-    return &__w_handler_def_radio;
++    if (!strncmp(name, "wifi0", strlen("wifi0")))
++        return &__w_handler_def_radio_da;
++    else
++        return &__w_handler_def_radio_ol;
++    
++
+ }
+ 
+ /**
+@@ -716,10 +879,10 @@ __wext_set_ssid(struct net_device *dev, struct iw_request_info *info,
+         ssid.len = acfg_min(iwreq->essid.length, (ACFG_MAX_SSID_LEN ));
+ 
+     /* Extra points to the SSID  */
+-    memcpy(ssid.name, extra, ssid.len);
++    memcpy(ssid.ssid, extra, ssid.len);
+ 
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): Set SSID to %s \n",\
+-                                            __FUNCTION__,ssid.name);
++                                            __FUNCTION__,ssid.ssid);
+ 
+     status = __wioctl_sw[ACFG_REQ_SET_SSID](netdev_to_softc(dev),
+                                            (acfg_data_t *)&ssid);
+@@ -754,7 +917,7 @@ __wext_get_ssid(struct net_device *dev, struct iw_request_info *info,
+                                            (acfg_data_t *)&ssid);
+ 
+     iwreq->essid.length = ssid.len ;
+-    adf_os_str_ncopy(extra ,ssid.name ,ssid.len) ;
++    adf_os_str_ncopy(extra ,ssid.ssid ,ssid.len) ;
+     iwreq->essid.flags = 1 ; /* active */
+ 
+     return __a_status_to_os(status);
+@@ -778,11 +941,10 @@ __wext_set_freq(struct net_device *dev, struct iw_request_info *info,
+     a_status_t          status = A_STATUS_EINVAL;
+     acfg_freq_t freq ;
+ 
+-    freq.m = iwreq->freq.m ;
+-    freq.e = iwreq->freq.e ;
++    freq = iwreq->freq.m ;
+ 
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): mantissa = %d ; exponent = %d \n",\
+-            __FUNCTION__,freq.m , freq.e);
++            __FUNCTION__,freq , iwreq->freq.e);
+ 
+     status = __wioctl_sw[ACFG_REQ_SET_FREQUENCY](netdev_to_softc(dev), \
+             (acfg_data_t *)&freq);
+@@ -813,8 +975,8 @@ __wext_get_freq(struct net_device *dev, struct iw_request_info *info,
+ 
+     status = __wioctl_sw[ACFG_REQ_GET_FREQUENCY](netdev_to_softc(dev),
+                                            (acfg_data_t *)&freq);
+-    iwreq->freq.e =  freq.e ;
+-    iwreq->freq.m = freq.m ;
++    iwreq->freq.e = 1;
++    iwreq->freq.m = freq ;
+ 
+     return __a_status_to_os(status);
+ }
+@@ -845,10 +1007,8 @@ __wext_set_opmode(struct net_device *dev, struct iw_request_info *info,
+         case IW_MODE_ADHOC: opmode = ACFG_OPMODE_IBSS ; break ;
+         case IW_MODE_INFRA: opmode = ACFG_OPMODE_STA ; break ;
+         case IW_MODE_MASTER: opmode = ACFG_OPMODE_HOSTAP ; break ;
+-        case IW_MODE_REPEAT: return -EINVAL ; break ;
+-        case IW_MODE_SECOND: return -EINVAL ; break ;
+         case IW_MODE_MONITOR: opmode = ACFG_OPMODE_MONITOR ; break ;
+-        case IW_MODE_MESH: return -EINVAL ; break ;
++        default: return -EINVAL ; break;
+     }
+ 
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): Set Opmode to %d \n",\
+@@ -935,15 +1095,16 @@ __wext_set_rts(struct net_device *dev, struct iw_request_info *info,
+     acfg_rts_t  rts ;
+     a_status_t  status = A_STATUS_EINVAL;
+ 
+-    rts.val = iwreq->rts.value ;
+-    rts.flags = 0 ;
++    rts = iwreq->rts.value ;
++    //    rts.flags = 0 ;
+ 
++#if 0
+     if(iwreq->rts.disabled)
+         rts.flags |= ACFG_RTS_DISABLED ;
+ 
+     if(iwreq->rts.fixed)
+         rts.flags |= ACFG_RTS_FIXED ;
+-
++#endif
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): rts= %d; disabled= %d; fixed= %d\n",
+ 			__FUNCTION__, iwreq->rts.value,
+ 			iwreq->rts.disabled, iwreq->rts.fixed);
+@@ -979,14 +1140,14 @@ __wext_get_rts(struct net_device *dev, struct iw_request_info *info,
+     status = __wioctl_sw[ACFG_REQ_GET_RTS](netdev_to_softc(dev),
+                                            (acfg_data_t *)&rts);
+ 
+-    iwreq->rts.value = rts.val ;
++    iwreq->rts.value = rts ;
+ 
+-    if(rts.flags & ACFG_RTS_DISABLED)
++    if(rts == 0 || rts == IEEE80211_RTS_MAX)
+         iwreq->rts.disabled = 1 ;
+     else
+         iwreq->rts.disabled = 0 ;
+ 
+-    if(rts.flags & ACFG_RTS_FIXED)
++    if(rts != 0)
+         iwreq->rts.fixed = 1 ;
+     else
+         iwreq->rts.fixed = 0 ;
+@@ -1019,15 +1180,15 @@ __wext_get_txpow(struct net_device *dev, struct iw_request_info *info,
+     status = __wioctl_sw[ACFG_REQ_GET_TXPOW](netdev_to_softc(dev),
+                                            (acfg_data_t *)&txpow);
+ 
+-    iwreq->txpower.value = txpow.val ;
++    iwreq->txpower.value = txpow ;
+     iwreq->txpower.flags = IW_TXPOW_DBM ;
+ 
+-    if(txpow.flags & ACFG_TXPOW_DISABLED)
++    if(txpow == 0)
+         iwreq->txpower.disabled = 1 ;
+     else
+         iwreq->txpower.disabled = 0 ;
+ 
+-    if(txpow.flags & ACFG_TXPOW_FIXED)
++    if(txpow != 0)
+         iwreq->txpower.fixed = 1 ;
+     else
+         iwreq->txpower.fixed = 0 ;
+@@ -1055,18 +1216,19 @@ __wext_set_txpow(struct net_device *dev, struct iw_request_info *info,
+ 
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): \n",__FUNCTION__);
+ 
+-    txpow.val = iwreq->txpower.value ;
+-    txpow.flags = 0 ;
++    txpow = iwreq->txpower.value ;
++    //    txpow.flags = 0 ;
+ 
+     if( (iwreq->txpower.flags & IW_TXPOW_TYPE) == IW_TXPOW_MWATT )
+         return __a_status_to_os(A_STATUS_ENOTSUPP) ;
+ 
++#if 0
+     if(iwreq->txpower.disabled)
+         txpow.flags |= ACFG_TXPOW_DISABLED ;
+ 
+     if(iwreq->txpower.fixed)
+         txpow.flags |= ACFG_TXPOW_FIXED ;
+-
++#endif
+     status = __wioctl_sw[ACFG_REQ_SET_TXPOW](netdev_to_softc(dev),
+                                            (acfg_data_t *)&txpow);
+ 
+@@ -1092,15 +1254,15 @@ __wext_set_frag(struct net_device *dev, struct iw_request_info *info,
+     acfg_frag_t  frag ;
+     a_status_t          status = A_STATUS_EINVAL;
+ 
+-    frag.val = iwreq->frag.value ;
+-    frag.flags = 0 ;
+-
++    frag = iwreq->frag.value ;
++    //    frag.flags = 0 ;
++#if 0
+     if(iwreq->frag.disabled)
+         frag.flags |= ACFG_FRAG_DISABLED ;
+ 
+     if(iwreq->frag.fixed)
+         frag.flags |= ACFG_FRAG_FIXED ;
+-
++#endif
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): frag= %d; disabled= %d; fixed= %d\n",
+ 			__FUNCTION__, iwreq->frag.value,
+ 			iwreq->frag.disabled, iwreq->frag.fixed);
+@@ -1136,14 +1298,14 @@ __wext_get_frag(struct net_device *dev, struct iw_request_info *info,
+     status = __wioctl_sw[ACFG_REQ_GET_FRAG](netdev_to_softc(dev),
+                                            (acfg_data_t *)&frag);
+ 
+-    iwreq->frag.value = frag.val ;
++    iwreq->frag.value = frag ;
+ 
+-    if(frag.flags & ACFG_FRAG_DISABLED)
++    if(frag == 0 || frag == IEEE80211_FRAGMT_THRESHOLD_MAX)
+         iwreq->frag.disabled = 1 ;
+     else
+         iwreq->frag.disabled = 0 ;
+ 
+-    if(frag.flags & ACFG_FRAG_FIXED)
++    if(frag != 0)
+         iwreq->frag.fixed = 1 ;
+     else
+         iwreq->frag.fixed = 0 ;
+@@ -1327,8 +1489,8 @@ __wext_set_rate(struct net_device *dev, struct iw_request_info *info,
+ 
+     adf_trace(ADF_DEBUG_FUNCTRACE, "%s(): \n",__FUNCTION__);
+ 
+-    bitrate.fixed = iwreq->bitrate.fixed;
+-    bitrate.value = iwreq->bitrate.value;
++    //    bitrate.fixed = iwreq->bitrate.fixed;
++    bitrate = iwreq->bitrate.value;
+ 
+     status = __wioctl_sw[ACFG_REQ_SET_RATE](netdev_to_softc(dev),
+                                      (acfg_data_t *)&bitrate);
+@@ -1586,9 +1748,13 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+             int r = se_rates[j] & IEEE80211_RATE_VAL;
+             if (r != 0) {
+                 iwe.u.bitrate.value = r * (1000000 / 2);
++                last_ev = current_val;
+                 current_val = iwe_stream_add_value(info,current_ev,
+                     current_val, end_buf, &iwe,
+                     IW_EV_PARAM_LEN);
++                /* We ran out of space in the buffer. */
++                if (last_ev == current_val)
++                    return A_STATUS_E2BIG;
+              }
+         }
+     }
+@@ -1598,22 +1764,22 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+             int r = ie.xrates_ie[2+j] & IEEE80211_RATE_VAL;
+             if (r != 0) {
+                 iwe.u.bitrate.value = r * (1000000 / 2);
++                last_ev = current_val;
+                 current_val = iwe_stream_add_value(info,current_ev,
+                         current_val, end_buf, &iwe,
+                         IW_EV_PARAM_LEN);
++                /* We ran out of space in the buffer. */
++                if (last_ev == current_val)
++                    return A_STATUS_E2BIG;
+             }
+         }
+     }
++
+     /* remove fixed header if no rates were added */
+     if ((current_val - current_ev) > IW_EV_LCP_LEN) {
+         current_ev = current_val;
+-    } else {
+-        /* We ran out of space in the buffer. */
+-        if (last_ev == current_ev)
+-            return A_STATUS_E2BIG;
+     }
+ 
+-
+     adf_os_mem_zero(&iwe, sizeof(iwe));
+     last_ev = current_ev;
+     iwe.cmd = IWEVCUSTOM;
+@@ -1646,7 +1812,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+                                               &iwe, buf);
+ 
+             /* We ran out of space in the buffer */
+-            if (last_ev == current_ev) return A_STATUS_E2BIG;
++            if (last_ev == current_ev) {
++                return A_STATUS_E2BIG;
++            }
+         }
+ 
+     }
+@@ -1657,7 +1825,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+ 
+         adf_os_mem_zero(&iwe, sizeof(iwe));
+ 
+-        if ((ie.se_wpa_ie[1] + 2) > MAX_IE_LENGTH) return A_STATUS_E2BIG;
++        if ((ie.se_wpa_ie[1] + 2) > MAX_IE_LENGTH) {
++            return A_STATUS_E2BIG;
++        }
+ 
+         adf_os_mem_copy(buf, ie.se_wpa_ie, ie.se_wpa_ie[1] + 2);
+ 
+@@ -1669,7 +1839,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+                                               &iwe, buf);
+ 
+             /* We ran out of space in the buffer. */
+-            if (last_ev == current_ev) return A_STATUS_E2BIG;
++            if (last_ev == current_ev) {
++                return A_STATUS_E2BIG;
++            }
+         }
+ 
+     }
+@@ -1689,7 +1861,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+         }
+ 
+         /* We ran out of space in the buffer. */
+-        if (last_ev == current_ev) return A_STATUS_E2BIG;
++        if (last_ev == current_ev) {
++        return A_STATUS_E2BIG;
++        }
+ 
+     } else if (ie.se_wmeinfo != NULL) {
+         static const a_uint8_t wme_leader[] = "wme_ie=";
+@@ -1708,7 +1882,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+ 
+ 
+         /* We ran out of space in the buffer. */
+-        if (last_ev == current_ev) return A_STATUS_E2BIG;
++        if (last_ev == current_ev) {
++            return A_STATUS_E2BIG;
++        }
+ 
+     }
+     if (ie.se_ath_ie != NULL) {
+@@ -1728,7 +1904,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+                                               &iwe, buf);
+ 
+         /* We ran out of space in the buffer. */
+-        if (last_ev == current_ev) return A_STATUS_E2BIG;
++        if (last_ev == current_ev) {
++        return A_STATUS_E2BIG;
++        }
+     }
+ 
+     if (ie.se_wps_ie != NULL) {
+@@ -1746,7 +1924,9 @@ __giwscan_cb(void *arg, struct acfg_scan_result * sr)
+                                               &iwe, buf);
+ 
+             /* We ran out of space in the buffer */
+-            if (last_ev == current_ev) return A_STATUS_E2BIG;
++            if (last_ev == current_ev) {
++        return A_STATUS_E2BIG;
++            }
+         }
+     }
+     adf_os_mem_zero(&iwe, sizeof(iwe));
+@@ -1846,7 +2026,6 @@ __wext_get_scanresults(struct net_device *dev, struct iw_request_info *info,
+     } else {
+         req.end_buf = extra + iwreq->data.length;
+     }
+-
+     /*
+      * Do two passes to insure WPA/non-WPA scan candidates
+      * are sorted to the front.  This is a hack to deal with
+@@ -2491,8 +2670,8 @@ __wpriv_dbgreq(struct net_device *dev, struct iw_request_info *info,
+     adf_trace(ADF_DEBUG_FUNCTRACE,  "\n");
+ 
+     copy_from_user(dbgreq, iwreq->data.pointer, iwreq->data.length);
+-    if (dbgreq->cmd == ACFG_DBGREQ_GETRRMSTATS ||
+-        dbgreq->cmd == ACFG_DBGREQ_GETBCNRPT) {
++    if (dbgreq->cmd == IEEE80211_DBGREQ_GETRRMSTATS ||
++        dbgreq->cmd == IEEE80211_DBGREQ_GETBCNRPT) {
+         data_size = dbgreq->data.rrmstats_req.data_size;
+         data_addr = dbgreq->data.rrmstats_req.data_addr;
+         dbgreq->data.rrmstats_req.data_addr = vmalloc(data_size);
+@@ -2501,7 +2680,7 @@ __wpriv_dbgreq(struct net_device *dev, struct iw_request_info *info,
+             return __a_status_to_os(status);
+         }
+         copy_from_user(dbgreq->data.rrmstats_req.data_addr, data_addr, data_size);
+-    } else if (dbgreq->cmd == ACFG_DBGREQ_GETACSREPORT) {
++    } else if (dbgreq->cmd == IEEE80211_DBGREQ_GETACSREPORT) {
+         data_size = dbgreq->data.acs_rep.data_size;
+         data_addr = dbgreq->data.acs_rep.data_addr;
+         dbgreq->data.acs_rep.data_addr = vmalloc(data_size);
+@@ -2514,12 +2693,12 @@ __wpriv_dbgreq(struct net_device *dev, struct iw_request_info *info,
+ 
+     status = __wioctl_sw[ACFG_REQ_DBGREQ](netdev_to_softc(dev), (acfg_data_t *)dbgreq);
+ 
+-    if (dbgreq->cmd == ACFG_DBGREQ_GETRRMSTATS ||
+-        dbgreq->cmd == ACFG_DBGREQ_GETBCNRPT) {
++    if (dbgreq->cmd == IEEE80211_DBGREQ_GETRRMSTATS ||
++        dbgreq->cmd == IEEE80211_DBGREQ_GETBCNRPT) {
+         copy_to_user(data_addr, dbgreq->data.rrmstats_req.data_addr, data_size);
+         vfree(dbgreq->data.rrmstats_req.data_addr);
+         dbgreq->data.rrmstats_req.data_addr = data_addr;
+-    } else if (dbgreq->cmd == ACFG_DBGREQ_GETACSREPORT) {
++    } else if (dbgreq->cmd == IEEE80211_DBGREQ_GETACSREPORT) {
+         copy_to_user(data_addr, dbgreq->data.acs_rep.data_addr, data_size);
+         vfree(dbgreq->data.acs_rep.data_addr);
+         dbgreq->data.acs_rep.data_addr = data_addr;
+diff --git a/adf/net/linux/adf_net_wext_pvt.h b/adf/net/linux/adf_net_wext_pvt.h
+index b88c5fc..f921bdd 100644
+--- a/adf/net/linux/adf_net_wext_pvt.h
++++ b/adf/net/linux/adf_net_wext_pvt.h
+@@ -17,6 +17,9 @@
+ #ifndef __ADF_NET_WEXT_PVT_H
+ #define __ADF_NET_WEXT_PVT_H
+ 
++#define ADDR_LEN 6
++#define RATE_MAXSIZE 36
++
+ /* scan section */
+ /** 
+  * @brief 
+@@ -93,7 +96,7 @@ struct acfg_ie_list {
+ 
+ /* OUI Definitions */
+ #define WPS_OUI  0xf25000
+-#define WPS_OUI_TYPE  0x04
++//#define WPS_OUI_TYPE  0x04
+ #define WSC_OUI 0x0050f204
+ 
+ #define	WME_OUI			0xf25000
+@@ -107,7 +110,7 @@ struct acfg_ie_list {
+ #define	ATH_OUI			0x7f0300		/* Atheros OUI */
+ #define	ATH_OUI_TYPE		0x01
+ 
+-#define IEEE80211_RATE_MAXSIZE 36
++//#define IEEE80211_RATE_MAXSIZE 36
+ #define IEEE80211_ADDR_LEN      6
+ 
+ /** 
+diff --git a/adf/net/linux/wcfg.h b/adf/net/linux/wcfg.h
+index 2b70ffa..ed44305 100644
+--- a/adf/net/linux/wcfg.h
++++ b/adf/net/linux/wcfg.h
+@@ -23,6 +23,7 @@
+  * while servicing requests issued by wlanconfig.
+ */
+ 
++#include <ieee80211_external_config.h>
+ #include<acfg_api_types.h> 
+ 
+ #define LINUX_PVT_DEV_START         (SIOCDEVPRIVATE + 0)
+@@ -42,8 +43,8 @@
+ /**
+  * @brief VAP specific IOCTL numbers
+  */
+-#define LINUX_PVT_SET_VENDORPARAM   (SIOCDEVPRIVATE + 0)
+-#define LINUX_PVT_GET_VENDORPARAM   (SIOCDEVPRIVATE + 1)
++//#define LINUX_PVT_SET_VENDORPARAM   (SIOCDEVPRIVATE + 0)
++//#define LINUX_PVT_GET_VENDORPARAM   (SIOCDEVPRIVATE + 1)
+ #define LINUX_PVT_GETKEY            (SIOCDEVPRIVATE + 3) 
+ #define LINUX_PVT_GETWPAIE          (SIOCDEVPRIVATE + 4) 
+ #define LINUX_PVT_GETSTA_STATS      (SIOCDEVPRIVATE + 5) 
+diff --git a/adf/os/adf_os_fs.c b/adf/os/adf_os_fs.c
+index a091c84..cd23df8 100644
+--- a/adf/os/adf_os_fs.c
++++ b/adf/os/adf_os_fs.c
+@@ -12,7 +12,7 @@
+ 
+ int __ahdecl adf_os_fs_read(char *filename,
+                                 loff_t offset,
+-                                unsigned int size,
++                                unsigned int *size,
+                                 unsigned char *buffer)
+ {
+     return __adf_os_fs_read(filename, offset, size, buffer);
+diff --git a/adf/os/linux/adf_os_defer_pvt.h b/adf/os/linux/adf_os_defer_pvt.h
+index 5c13396..aa8b5f9 100644
+--- a/adf/os/linux/adf_os_defer_pvt.h
++++ b/adf/os/linux/adf_os_defer_pvt.h
+@@ -170,11 +170,11 @@ __adf_os_disable_work(adf_os_handle_t hdl, __adf_os_work_t  * work)
+     /*cancel a work and wait for it to finish*/
+     /*cancel_work_sync returns true if work was pending, false otherwise */
+     a_status_t ret = A_STATUS_OK;
+-
++#if 0
+     if(cancel_work_sync(&work->work)){
+         ret = A_STATUS_EINPROGRESS;
+     }
+-
++#endif
+     return ret;
+ }
+ static inline a_status_t 
+diff --git a/adf/os/linux/adf_os_fs_pvt.c b/adf/os/linux/adf_os_fs_pvt.c
+index ef2e581..0254140 100644
+--- a/adf/os/linux/adf_os_fs_pvt.c
++++ b/adf/os/linux/adf_os_fs_pvt.c
+@@ -19,7 +19,7 @@
+  * Read file from file system
+  * for now, only for getting calibration data from file
+  */
+-int __adf_os_fs_read(char *filename, loff_t offset, unsigned int size, unsigned char *buffer)
++int __adf_os_fs_read(char *filename, loff_t offset, unsigned int *size, unsigned char *buffer)
+ {
+     struct file      *filp;
+     struct inode     *inode;
+@@ -41,7 +41,11 @@ int __adf_os_fs_read(char *filename, loff_t offset, unsigned int size, unsigned
+ 
+     printk("%s[%d], Open File %s SUCCESS!!\n", __func__, __LINE__, filename);
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4,0,0)
+     inode = filp->f_dentry->d_inode;
++#else
++    inode = file_inode(filp);
++#endif
+     magic = inode->i_sb->s_magic;
+     printk("file system magic:%ld \n", magic);
+     printk("super blocksize:%ld \n", inode->i_sb->s_blocksize);
+@@ -50,15 +54,10 @@ int __adf_os_fs_read(char *filename, loff_t offset, unsigned int size, unsigned
+     fsize = inode->i_size;
+     printk("file size:%d \n", (unsigned int)fsize);
+ 
+-    if (fsize != size) {
+-        printk("%s[%d]: caldata data size mismatch, fsize=%d, cal_size=%d\n",
+-            __func__, __LINE__, (unsigned int)fsize, size);
+-
+-        if(size > fsize)
++    if (fsize != *size) {
++        if(*size > fsize)
+         {
+-            printk("%s[%d], exit with error: size > fsize\n", __func__, __LINE__);
+-            filp_close(filp, NULL);
+-            return -1;
++            *size = fsize;
+         }
+     }
+ 
+@@ -66,7 +65,7 @@ int __adf_os_fs_read(char *filename, loff_t offset, unsigned int size, unsigned
+ 
+     filp->f_pos = offset;
+     set_fs(KERNEL_DS);
+-    filp->f_op->read(filp, buffer, size, &(filp->f_pos));
++    filp->f_op->read(filp, buffer, *size, &(filp->f_pos));
+     set_fs(fs);
+ 
+     filp_close(filp, NULL);
+diff --git a/adf/os/linux/adf_os_fs_pvt.h b/adf/os/linux/adf_os_fs_pvt.h
+index fb1809b..be85b45 100644
+--- a/adf/os/linux/adf_os_fs_pvt.h
++++ b/adf/os/linux/adf_os_fs_pvt.h
+@@ -8,7 +8,7 @@
+ #define __ADF_OS_FS_PVT_H__
+ 
+ 
+-extern int  __adf_os_fs_read(char *filename, loff_t offset, unsigned int size, unsigned char *buffer);
++extern int  __adf_os_fs_read(char *filename, loff_t offset, unsigned int *size, unsigned char *buffer);
+ 
+ 
+ #endif /*__ADF_OS_FS_PVT_H__*/
+diff --git a/adf/os/linux/adf_os_util_pvt.h b/adf/os/linux/adf_os_util_pvt.h
+index fa4726c..85df6a9 100644
+--- a/adf/os/linux/adf_os_util_pvt.h
++++ b/adf/os/linux/adf_os_util_pvt.h
+@@ -35,11 +35,13 @@
+ #if defined (__LINUX_MIPS32_ARCH__) || defined (__LINUX_MIPS64_ARCH__)
+ #include <asm/dec/system.h>
+ #else
+-#if !defined ( __i386__) && !defined (__LINUX_POWERPC_ARCH__)
++#ifndef __i386__
++#if LINUX_VERSION_CODE  < KERNEL_VERSION(4,0,0)
+ #include <asm/system.h>
+ #endif
+ #endif
+ #endif
++#endif
+ 
+ #include <adf_os_types.h>
+ /*
+diff --git a/adf/os/linux/adf_os_waitq_pvt.h b/adf/os/linux/adf_os_waitq_pvt.h
+old mode 100644
+new mode 100755
+-- 
+1.9.1
+

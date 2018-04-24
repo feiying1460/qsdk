@@ -1,0 +1,26 @@
+diff --git a/hostapd/Makefile b/hostapd/Makefile
+index 52c72dc..1bcd0eb 100644
+--- a/hostapd/Makefile
++++ b/hostapd/Makefile
+@@ -110,6 +110,8 @@ CFLAGS += -DCONFIG_MODULE_TESTS
+ OBJS += hapd_module_tests.o
+ endif
+ 
++LIBS_c += $(LIBS)
++
+ ifdef CONFIG_WPA_TRACE
+ CFLAGS += -DWPA_TRACE
+ OBJS += ../src/utils/trace.o
+diff --git a/wpa_supplicant/Makefile b/wpa_supplicant/Makefile
+index 55b191f..66a0e0b 100644
+--- a/wpa_supplicant/Makefile
++++ b/wpa_supplicant/Makefile
+@@ -132,6 +132,8 @@ OBJS += ../src/utils/os_$(CONFIG_OS).o
+ OBJS_p += ../src/utils/os_$(CONFIG_OS).o
+ OBJS_c += ../src/utils/os_$(CONFIG_OS).o
+ 
++LIBS_c +=  $(filter-out -lfal , $(LIBS))
++
+ ifdef CONFIG_WPA_TRACE
+ CFLAGS += -DWPA_TRACE
+ OBJS += ../src/utils/trace.o

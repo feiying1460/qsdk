@@ -1,0 +1,30 @@
+--- a/drivers/net/wireless/ath/wil6210/debugfs.c
++++ b/drivers/net/wireless/ath/wil6210/debugfs.c
+@@ -1762,6 +1762,7 @@ static const struct dbg_off dbg_wil_off[] = {
+ 	WIL_FIELD(ap_isolate,	S_IRUGO,		doff_u32),
+ 	WIL_FIELD(discovery_mode, S_IRUGO | S_IWUSR,	doff_u8),
+ 	WIL_FIELD(chip_revision, S_IRUGO,		doff_u8),
++	WIL_FIELD(abft_len, S_IRUGO | S_IWUSR,		doff_u8),
+ 	{},
+ };
+ 
+--- a/drivers/net/wireless/ath/wil6210/wil6210.h
++++ b/drivers/net/wireless/ath/wil6210/wil6210.h
+@@ -669,6 +669,7 @@ struct wil6210_priv {
+ 	struct dentry *debug;
+ 	struct wil_blob_wrapper blobs[ARRAY_SIZE(fw_mapping)];
+ 	u8 discovery_mode;
++	u8 abft_len;
+ 
+ 	void *platform_handle;
+ 	struct wil_platform_ops platform_ops;
+--- a/drivers/net/wireless/ath/wil6210/wmi.c
++++ b/drivers/net/wireless/ath/wil6210/wmi.c
+@@ -1133,6 +1133,7 @@ int wmi_pcp_start(struct wil6210_priv *wil, int bi, u8 wmi_nettype,
+ 		.hidden_ssid = hidden_ssid,
+ 		.is_go = is_go,
+ 		.disable_ap_sme = disable_ap_sme,
++		.abft_len = wil->abft_len,
+ 	};
+ 	struct {
+ 		struct wmi_cmd_hdr wmi;

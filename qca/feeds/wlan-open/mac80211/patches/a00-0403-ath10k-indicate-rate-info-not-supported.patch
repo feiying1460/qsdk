@@ -1,0 +1,24 @@
+From 7f1c50cfb4bc78c72d64702b68d87b6d30871399 Mon Sep 17 00:00:00 2001
+From: Thomas Pedersen <twp@codeaurora.org>
+Date: Tue, 23 Aug 2016 14:54:49 -0700
+Subject: [PATCH] ath10k: indicate rate info doesn't exist for tx status
+
+Instead we can use the PEER_STATS event.
+
+Signed-off-by: Thomas Pedersen <twp@codeaurora.org>
+---
+ drivers/net/wireless/ath/ath10k/txrx.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+--- a/drivers/net/wireless/ath/ath10k/txrx.c
++++ b/drivers/net/wireless/ath/ath10k/txrx.c
+@@ -102,6 +102,9 @@ int ath10k_txrx_tx_unref(struct ath10k_h
+ 	info->status.rates[0].idx = -1;
+ 	trace_ath10k_txrx_tx_unref(ar, tx_done->msdu_id);
+ 
++	/* we don't provide rate info */
++	info->status.rates[0].idx = -1;
++
+ 	if (tx_done->status == HTT_TX_COMPL_STATE_DISCARD) {
+ 		ieee80211_free_txskb(htt->ar->hw, msdu);
+ 		return 0;

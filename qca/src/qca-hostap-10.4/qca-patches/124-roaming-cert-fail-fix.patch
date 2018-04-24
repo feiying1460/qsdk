@@ -1,0 +1,14 @@
+diff --git a/src/ap/wpa_auth_glue.c b/src/ap/wpa_auth_glue.c
+index aabac36..e3d6d40 100644
+--- a/src/ap/wpa_auth_glue.c
++++ b/src/ap/wpa_auth_glue.c
+@@ -651,8 +651,7 @@ int hostapd_setup_wpa(struct hostapd_data *hapd)
+ 	}
+ 
+ #ifdef CONFIG_IEEE80211R_AP
+-	if (!hostapd_drv_none(hapd) &&
+-	    wpa_key_mgmt_ft(hapd->conf->wpa_key_mgmt)) {
++	if (!hostapd_drv_none(hapd)) {
+ 		hapd->l2 = l2_packet_init(hapd->conf->bridge[0] ?
+ 					  hapd->conf->bridge :
+ 					  hapd->conf->iface, NULL, ETH_P_RRB,

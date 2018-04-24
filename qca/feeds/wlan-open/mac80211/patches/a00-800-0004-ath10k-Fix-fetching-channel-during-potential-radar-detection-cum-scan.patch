@@ -1,0 +1,12 @@
+--- a/drivers/net/wireless/ath/ath10k/wmi.c
++++ b/drivers/net/wireless/ath/ath10k/wmi.c
+@@ -3664,6 +3664,9 @@ static void ath10k_dfs_radar_report(stru
+ 
+ 	spin_lock_bh(&ar->data_lock);
+ 	ch = ar->rx_channel;
++	/* fetch target operating channel during channel change */
++	if (!ch)
++		ch = ar->tgt_oper_chan;
+ 	spin_unlock_bh(&ar->data_lock);
+ 
+ 	if (!ch) {

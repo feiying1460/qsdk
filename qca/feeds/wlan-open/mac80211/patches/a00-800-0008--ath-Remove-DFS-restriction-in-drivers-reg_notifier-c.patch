@@ -1,0 +1,14 @@
+Index: backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/regd.c
+===================================================================
+--- backports-20161201-3.14.77-9ab3068.orig/drivers/net/wireless/ath/regd.c	2017-03-18 22:40:04.258597932 +0530
++++ backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/regd.c	2017-03-18 22:40:40.078333344 +0530
+@@ -517,9 +517,6 @@
+ {
+ 	struct ath_common *common = container_of(reg, struct ath_common,
+ 						 regulatory);
+-	/* We always apply this */
+-	ath_reg_apply_radar_flags(wiphy);
+-
+ 	/*
+ 	 * This would happen when we have sent a custom regulatory request
+ 	 * a world regulatory domain and the scheduler hasn't yet processed

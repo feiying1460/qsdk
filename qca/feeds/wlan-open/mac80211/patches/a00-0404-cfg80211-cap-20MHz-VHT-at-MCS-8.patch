@@ -1,0 +1,28 @@
+From d1f1e7e8ea8db98b0c3032ec034a075fcdfa9d85 Mon Sep 17 00:00:00 2001
+From: Thomas Pedersen <twp@codeaurora.org>
+Date: Wed, 24 Aug 2016 16:03:50 -0700
+Subject: [PATCH] cfg80211: cap 20MHz VHT bitrate at MCS 8
+
+Some drivers (ath10k) report MCS 9 @ 20MHz, which
+technically isn't allowed. To get more meaningful value
+than 0 out of this however, just cap the bitrate for 20MHz
+to MCS 8.
+
+Signed-off-by: Thomas Pedersen <twp@codeaurora.org>
+---
+ net/wireless/util.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/net/wireless/util.c
++++ b/net/wireless/util.c
+@@ -1162,7 +1162,9 @@ static u32 cfg80211_calculate_bitrate_vh
+ 		   58500000,
+ 		   65000000,
+ 		   78000000,
+-		   0,
++		   /* some drivers report MCS 9 for 20MHz anyway. Clip to MCS 8
++		    * bitrate as it's closer than 0 */
++		   78000000,
+ 		},
+ 		{  13500000,
+ 		   27000000,

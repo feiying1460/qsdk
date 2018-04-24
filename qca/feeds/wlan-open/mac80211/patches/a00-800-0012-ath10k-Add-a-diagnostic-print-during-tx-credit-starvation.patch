@@ -1,0 +1,14 @@
+Index: backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/htc.c
+===================================================================
+--- backports-20161201-3.14.77-9ab3068.orig/drivers/net/wireless/ath/ath10k/htc.c	2017-03-23 16:49:47.738426308 +0530
++++ backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/htc.c	2017-03-23 16:54:38.976048061 +0530
+@@ -119,6 +119,9 @@
+ 		credits = DIV_ROUND_UP(skb->len, htc->target_credit_size);
+ 		spin_lock_bh(&htc->tx_lock);
+ 		if (ep->tx_credits < credits) {
++			ath10k_dbg(ar, ATH10K_DBG_HTC,
++				   "Insufficient credits: ep %d required %d available %d\n",
++				   eid, credits, ep->tx_credits);
+ 			spin_unlock_bh(&htc->tx_lock);
+ 			ret = -EAGAIN;
+ 			goto err_pull;

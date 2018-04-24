@@ -1,0 +1,87 @@
+--- a/drivers/net/wireless/ath/ath10k/debug.c
++++ b/drivers/net/wireless/ath/ath10k/debug.c
+@@ -1203,6 +1203,57 @@ static const struct file_operations fops
+ 	.llseek = default_llseek,
+ };
+ 
++static ssize_t ath10k_write_warm_hw_reset(struct file *file,
++					      const char __user *user_buf,
++					      size_t count, loff_t *ppos)
++{
++	struct ath10k *ar = file->private_data;
++	char buf[32];
++	size_t buf_size;
++	int ret;
++	bool val;
++
++	buf_size = min(count, (sizeof(buf) - 1));
++	if (copy_from_user(buf, user_buf, buf_size))
++		return -EFAULT;
++
++	buf[buf_size] = '\0';
++
++	if (strtobool(buf, &val) != 0)
++		return -EINVAL;
++
++	if (!val)
++		return -EINVAL;
++
++	mutex_lock(&ar->conf_mutex);
++
++	if (ar->state != ATH10K_STATE_ON) {
++		ret = -ENETDOWN;
++		goto exit;
++	}
++
++	ret = ath10k_wmi_pdev_set_param(ar, ar->wmi.pdev_param->pdev_reset,
++					WMI_RST_MODE_WARM_RESET);
++
++	if (ret) {
++		ath10k_warn(ar, "failed to warm hw reset: %d\n", ret);
++		goto exit;
++	}
++
++	ret = count;
++
++exit:
++	mutex_unlock(&ar->conf_mutex);
++	return ret;
++}
++
++static const struct file_operations fops_warm_hw_reset = {
++	.write = ath10k_write_warm_hw_reset,
++	.open = simple_open,
++	.owner = THIS_MODULE,
++	.llseek = default_llseek,
++};
++
+ static ssize_t ath10k_read_htt_max_amsdu_ampdu(struct file *file,
+ 					       char __user *user_buf,
+ 					       size_t count, loff_t *ppos)
+@@ -2585,6 +2636,8 @@ int ath10k_debug_register(struct ath10k
+ 			    ar->debug.debugfs_phy, ar, &fops_nf_cal_period);
+ 	debugfs_create_file("reset_htt_stats", S_IRUSR | S_IWUSR,
+ 			    ar->debug.debugfs_phy, ar, &fops_rest_htt_stats);
++	debugfs_create_file("warm_hw_reset", S_IRUSR | S_IWUSR,
++			    ar->debug.debugfs_phy, ar, &fops_warm_hw_reset);
+ 
+ 	if (IS_ENABLED(CPTCFG_ATH10K_DFS_CERTIFIED)) {
+ 		debugfs_create_file("dfs_simulate_radar", S_IWUSR,
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -6187,6 +6187,15 @@ struct wmi_force_fw_hang_cmd {
+ 	__le32 delay_ms;
+ } __packed;
+ 
++enum wmi_pdev_reset_mode_type {
++	WMI_RST_MODE_TX_FLUSH = 1,
++	WMI_RST_MODE_WARM_RESET,
++	WMI_RST_MODE_COLD_RESET,
++	WMI_RST_MODE_WARM_RESET_RESTORE_CAL,
++	WMI_RST_MODE_COLD_RESET_RESTORE_CAL,
++	WMI_RST_MODE_MAX,
++};
++
+ enum ath10k_dbglog_level {
+ 	ATH10K_DBGLOG_LEVEL_VERBOSE = 0,
+ 	ATH10K_DBGLOG_LEVEL_INFO = 1,

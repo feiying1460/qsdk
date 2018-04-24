@@ -1,0 +1,20 @@
+--- a/drivers/net/wireless/ath/ath10k/htt_rx.c
++++ b/drivers/net/wireless/ath/ath10k/htt_rx.c
+@@ -2220,7 +2220,7 @@ ath10k_update_per_peer_tx_stats(struct a
+ {
+ 	struct ath10k_sta *arsta = (struct ath10k_sta *)sta->drv_priv;
+ 	u8 rate = 0, sgi;
+-	struct rate_info txrate;
++	struct rate_info txrate = {};
+ 
+ 	lockdep_assert_held(&ar->data_lock);
+ 
+@@ -2236,6 +2236,8 @@ ath10k_update_per_peer_tx_stats(struct a
+ 		return;
+ 	}
+ 
++	memset(&arsta->txrate, 0, sizeof(arsta->txrate));
++
+ 	if (txrate.flags == WMI_RATE_PREAMBLE_CCK ||
+ 	    txrate.flags == WMI_RATE_PREAMBLE_OFDM) {
+ 		rate = ATH10K_HW_LEGACY_RATE(peer_stats->ratecode);

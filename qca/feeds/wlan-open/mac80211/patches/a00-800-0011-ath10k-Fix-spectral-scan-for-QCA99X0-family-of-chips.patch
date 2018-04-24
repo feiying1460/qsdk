@@ -1,0 +1,96 @@
+Index: backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/core.c
+===================================================================
+--- backports-20161201-3.14.77-9ab3068.orig/drivers/net/wireless/ath/ath10k/core.c	2017-03-19 12:44:47.973996271 +0530
++++ backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/core.c	2017-03-19 12:45:12.837813505 +0530
+@@ -204,6 +204,7 @@
+ 		.sw_decrypt_mcast_mgmt = true,
+ 		.hw_ops = &qca99x0_ops,
+ 		.decap_align_bytes = 1,
++		.spectral_bin_discard = 4,
+ 	},
+ 	{
+ 		.id = QCA9984_HW_1_0_DEV_VERSION,
+@@ -230,6 +231,7 @@
+ 		.sw_decrypt_mcast_mgmt = true,
+ 		.hw_ops = &qca99x0_ops,
+ 		.decap_align_bytes = 1,
++		.spectral_bin_discard = 12,
+ 	},
+ 	{
+ 		.id = QCA9888_HW_2_0_DEV_VERSION,
+@@ -255,6 +257,7 @@
+ 		.sw_decrypt_mcast_mgmt = true,
+ 		.hw_ops = &qca99x0_ops,
+ 		.decap_align_bytes = 1,
++		.spectral_bin_discard = 12,
+ 	},
+ 	{
+ 		.id = QCA9377_HW_1_0_DEV_VERSION,
+@@ -319,6 +322,7 @@
+ 		.sw_decrypt_mcast_mgmt = true,
+ 		.hw_ops = &qca99x0_ops,
+ 		.decap_align_bytes = 1,
++		.spectral_bin_discard = 4,
+ 	},
+ };
+ 
+Index: backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/hw.h
+===================================================================
+--- backports-20161201-3.14.77-9ab3068.orig/drivers/net/wireless/ath/ath10k/hw.h	2017-03-19 12:44:47.182002095 +0530
++++ backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/hw.h	2017-03-19 12:45:12.837813505 +0530
+@@ -439,6 +439,9 @@
+ 
+ 	/* Number of bytes used for alignment in rx_hdr_status of rx desc. */
+ 	int decap_align_bytes;
++
++	/* Number of bytes to be discarded for each FFT sample */
++	int spectral_bin_discard;
+ };
+ 
+ struct htt_rx_desc;
+Index: backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/spectral.c
+===================================================================
+--- backports-20161201-3.14.77-9ab3068.orig/drivers/net/wireless/ath/ath10k/spectral.c	2017-03-15 16:31:46.000000000 +0530
++++ backports-20161201-3.14.77-9ab3068/drivers/net/wireless/ath/ath10k/spectral.c	2017-03-19 12:45:12.841813458 +0530
+@@ -56,6 +56,21 @@
+ 	return max_exp;
+ }
+ 
++static inline size_t ath10k_spectral_fix_bin_size(struct ath10k *ar,
++						  size_t bin_len)
++{
++	/* some chipsets reports bin size as 2^n bytes + 'm' bytes in
++	 * report mode 2. First 2^n bytes carries inband tones and last
++	 * 'm' bytes carries band edge detection data mainly used in
++	 * radar detection purpose. Strip last 'm' bytes to make bin size
++	 * as a valid one. 'm' can take possible values of 4, 12.
++	 */
++	if (!is_power_of_2(bin_len))
++		bin_len -= ar->hw_params.spectral_bin_discard;
++
++	return bin_len;
++}
++
+ int ath10k_spectral_process_fft(struct ath10k *ar,
+ 				struct wmi_phyerr_ev_arg *phyerr,
+ 				const struct phyerr_fft_report *fftr,
+@@ -70,17 +85,11 @@
+ 
+ 	fft_sample = (struct fft_sample_ath10k *)&buf;
+ 
++	bin_len = ath10k_spectral_fix_bin_size(ar, bin_len);
++
+ 	if (bin_len < 64 || bin_len > SPECTRAL_ATH10K_MAX_NUM_BINS)
+ 		return -EINVAL;
+ 
+-	/* qca99x0 reports bin size as 68 bytes (64 bytes + 4 bytes) in
+-	 * report mode 2. First 64 bytes carries inband tones (-32 to +31)
+-	 * and last 4 byte carries band edge detection data (+32) mainly
+-	 * used in radar detection purpose. Strip last 4 byte to make bin
+-	 * size is valid one.
+-	 */
+-	if (bin_len == 68)
+-		bin_len -= 4;
+ 
+ 	reg0 = __le32_to_cpu(fftr->reg0);
+ 	reg1 = __le32_to_cpu(fftr->reg1);

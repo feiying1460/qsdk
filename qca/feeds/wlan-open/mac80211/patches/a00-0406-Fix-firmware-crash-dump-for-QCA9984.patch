@@ -1,0 +1,177 @@
+--- a/drivers/net/wireless/ath/ath10k/debug.c
++++ b/drivers/net/wireless/ath/ath10k/debug.c
+@@ -2810,6 +2810,17 @@ static const struct fw_mem_map qca99x0_f
+ 	{QCA99X0_APB_REG_SPACE_2, QCA99X0_APB_REG_LEN_2, ATTR_REG_SPACE},
+ };
+ 
++static const struct fw_mem_map qca9984_fw_mem_map[] = {
++	{QCA99X0_DRAM_ADDR, QCA9984_DRAM_LEN, 0},
++	{QCA99X0_SRAM_ADDR, QCA99X0_SRAM_LEN, ATTR_SRAM_MEM},
++	{QCA99X0_IRAM_ADDR, QCA99X0_IRAM_LEN, 0},
++	{QCA99X0_APB_REG_SPACE_1, QCA99X0_APB_REG_LEN_1, ATTR_REG_SPACE},
++	{QCA99X0_WIFI_REG_SPACE, QCA99X0_WIFI_REG_LEN, ATTR_REG_SPACE},
++	{QCA99X0_CE_REG_SPACE, QCA99X0_CE_REG_LEN, ATTR_REG_SPACE},
++	{QCA99X0_SOC_REG_SPACE, QCA99X0_SOC_REG_LEN, ATTR_REG_SPACE},
++	{QCA99X0_APB_REG_SPACE_2, QCA99X0_APB_REG_LEN_2, ATTR_REG_SPACE},
++};
++
+ static const struct fw_mem_map ipq40xx_fw_mem_map[] = {
+ 	{QCA99X0_DRAM_ADDR, IPQ40XX_DRAM_LEN, 0},
+ 	{QCA99X0_SRAM_ADDR, QCA99X0_SRAM_LEN, ATTR_SRAM_MEM},
+@@ -2852,8 +2863,9 @@ static int ath10k_dbg_hw_reg_dump(struct
+ 
+ void ath10k_dbg_qca99x0_bug_on_fw_assert(struct ath10k *ar)
+ {
++	const struct fw_mem_map *ptr;
+ 	u32 rd_addr, rd_len;
+-	u8 *dump_addr, *pos, i;
++	u8 *dump_addr, *pos, i, attr_len;
+ 	int ret;
+ 
+ 	dump_addr = (u8 *)ioremap(ATH10K_FW_IO_MEM_REGION_2_ADDR,
+@@ -2866,11 +2878,19 @@ void ath10k_dbg_qca99x0_bug_on_fw_assert
+ 	pos = dump_addr;
+ 	memset(dump_addr, 0, ATH10K_FW_IO_MEM_REGION_2_SIZE);
+ 
++	if (QCA_REV_9984(ar) || QCA_REV_9888(ar)) {
++		ptr = qca9984_fw_mem_map;
++		attr_len = ARRAY_SIZE(qca9984_fw_mem_map);
++	} else {
++		ptr = qca99x0_fw_mem_map;
++		attr_len = ARRAY_SIZE(qca99x0_fw_mem_map);
++	}
++
+ 	ath10k_err(ar, "Collecting WLAN Firmware Dump...\n");
+ 
+-	for (i = 0; i < ARRAY_SIZE(qca99x0_fw_mem_map); i++) {
+-		rd_addr = qca99x0_fw_mem_map[i].addr;
+-		rd_len = qca99x0_fw_mem_map[i].len;
++	for (i = 0; i < attr_len; i++) {
++		rd_addr = ptr[i].addr;
++		rd_len = ptr[i].len;
+ 
+ 		if ((pos + rd_len) >
+ 		    (dump_addr + ATH10K_FW_IO_MEM_REGION_2_SIZE)) {
+@@ -2879,7 +2899,7 @@ void ath10k_dbg_qca99x0_bug_on_fw_assert
+                         return;
+ 		}
+ 
+-		switch(qca99x0_fw_mem_map[i].attr) {
++		switch(ptr[i].attr) {
+ 		case ATTR_SRAM_MEM:
+ 			ret = ath10k_dbg_qca99x0_fw_sram_dump(ar, rd_addr,
+ 							      pos, rd_len);
+@@ -3016,7 +3036,7 @@ void ath10k_dbg_bug_on_fw_assert(struct
+ 	if (!bug_on_fw_assert || ar->stats.fw_crash_counter == 0)
+ 		return;
+ 
+-	if (QCA_REV_99X0(ar))
++	if (QCA_REV_99X0(ar) || QCA_REV_9984(ar) || QCA_REV_9888(ar))
+ 		ath10k_dbg_qca99x0_bug_on_fw_assert(ar);
+ 	else if (QCA_REV_40XX(ar))
+ 		ath10k_dbg_ipq40xx_bug_on_fw_assert(ar);
+--- a/drivers/net/wireless/ath/ath10k/debug.h
++++ b/drivers/net/wireless/ath/ath10k/debug.h
+@@ -93,6 +93,7 @@ struct fw_mem_map {
+ #define QCA99X0_DRAM_ADDR              0x00400000
+ #define QCA99X0_DRAM_LEN               0x00060000 /* 384 kb */
+ #define IPQ40XX_DRAM_LEN               0x00068000 /* 416 kb */
++#define QCA9984_DRAM_LEN               0x00080000 /* 524 kb */
+ 
+ #define QCA99X0_IRAM_ADDR              0x00980000
+ #define QCA99X0_IRAM_LEN               0x00050000 /* 320 kb */
+--- a/drivers/net/wireless/ath/ath10k/ce.c
++++ b/drivers/net/wireless/ath/ath10k/ce.c
+@@ -1130,3 +1130,68 @@ void ath10k_ce_free_pipe(struct ath10k *
+ 	ce_state->src_ring = NULL;
+ 	ce_state->dest_ring = NULL;
+ }
++
++void ath10k_ce_dump_registers(struct ath10k *ar)
++{
++	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
++	struct ath10k_pci_pipe *pci_tx;
++	struct ath10k_ce_pipe *ce_state;
++	struct ath10k_ce_ring *src_ring;
++	struct ce_desc *base;
++	struct ce_desc *src_desc;
++	u32 ce_id, start, addr;
++	u32 write_index, sw_index, hw_index, nentries_mask;
++	bool meta_data, byte_swap, gather;
++	u16 nbytes;
++	int count;
++
++	ath10k_err(ar, "Copy Engine register dump:\n");
++	ath10k_err(ar, "index: addr: sr_wr_idx: sr_r_idx: dst_wr_idx: dst_r_idx:\n");
++	spin_lock_bh(&ar_pci->ce_lock);
++
++	for (ce_id = 0; ce_id < CE_COUNT; ce_id++) {
++		addr = ath10k_ce_base_address(ar, ce_id);
++		ath10k_err(ar, "[%02d]: 0x%08x %u %u %u %u\n", ce_id, addr,
++			   ath10k_ce_src_ring_write_index_get(ar, addr),
++			   ath10k_ce_src_ring_read_index_get(ar, addr),
++			   ath10k_ce_dest_ring_write_index_get(ar, addr),
++			   ath10k_ce_dest_ring_read_index_get(ar, addr));
++	}
++
++	/* We are interested in Copy Engine 4 Host to target HTT */
++	pci_tx = &ar_pci->pipe_info[CE4_HOST_TARGET_HTT];
++	ce_state = pci_tx->ce_hdl;
++	src_ring = ce_state->src_ring;
++
++	write_index = src_ring->write_index;
++	sw_index = src_ring->sw_index;
++	hw_index = src_ring->hw_index;
++	nentries_mask = src_ring->nentries_mask;
++
++	ath10k_err(ar, "write_index %u sw_index %u hw_index %u nentries_mask 0x%08x\n",
++		   write_index, sw_index, hw_index, nentries_mask);
++
++	base = src_ring->base_addr_owner_space;
++	start = (write_index  - CE_DESC_DUMP_COUNT) & (nentries_mask);
++
++	ath10k_err(ar, "DMA addr: nbytes: meta data: byte swap: gather:\n");
++	for (count = start; ; (count = ((count + 1) & nentries_mask))) {
++
++		src_desc = CE_SRC_RING_TO_DESC(base, count);
++		addr = __le32_to_cpu(src_desc->addr);
++		nbytes = __le16_to_cpu(src_desc->nbytes);
++		meta_data = MS(__le16_to_cpu(src_desc->flags),
++			       CE_DESC_FLAGS_META_DATA);
++		byte_swap = !!(__le16_to_cpu(src_desc->flags) &
++			       CE_DESC_FLAGS_BYTE_SWAP);
++		gather = !!(__le16_to_cpu(src_desc->flags) &
++			    CE_DESC_FLAGS_GATHER);
++		ath10k_err(ar, "[%02u]: 0x%08x %u %d %d %d", count, addr,
++			   nbytes, meta_data, byte_swap, gather);
++
++		if (count == write_index)
++			break;
++	}
++
++	spin_unlock_bh(&ar_pci->ce_lock);
++}
+--- a/drivers/net/wireless/ath/ath10k/ce.h
++++ b/drivers/net/wireless/ath/ath10k/ce.h
+@@ -229,6 +229,11 @@ void ath10k_ce_per_engine_service(struct
+ int ath10k_ce_disable_interrupts(struct ath10k *ar);
+ void ath10k_ce_enable_interrupts(struct ath10k *ar);
+ 
++/*==================CE debug====================*/
++#define CE_DESC_DUMP_COUNT	60
++#define	CE4_HOST_TARGET_HTT	4
++void ath10k_ce_dump_registers(struct ath10k *ar);
++
+ /* ce_attr.flags values */
+ /* Use NonSnooping PCIe accesses? */
+ #define CE_ATTR_NO_SNOOP		1
+--- a/drivers/net/wireless/ath/ath10k/pci.c
++++ b/drivers/net/wireless/ath/ath10k/pci.c
+@@ -1484,6 +1484,7 @@ static void ath10k_pci_fw_crashed_dump(s
+ 	ath10k_pci_dump_registers(ar, crash_data);
+ 
+ 	spin_unlock_bh(&ar->data_lock);
++	ath10k_ce_dump_registers(ar);
+ 
+ 	queue_work(ar->workqueue, &ar->restart_work);
+ }

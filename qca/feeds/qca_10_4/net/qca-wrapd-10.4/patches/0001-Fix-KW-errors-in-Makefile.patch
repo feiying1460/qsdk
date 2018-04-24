@@ -1,0 +1,18 @@
+diff --git a/Makefile b/Makefile
+index 1b17acb..8595940 100644
+--- a/Makefile
++++ b/Makefile
+@@ -16,8 +16,13 @@ CFLAGS += -I$(WPA_PATH)/src/utils
+ CFLAGS += -I$(WPA_PATH)/src/drivers
+ CFLAGS += -I$(WPA_PATH)/src/common
+ 
++else
++
++CFLAGS += -I$(QSDK_WRAPD)
++
+ endif
+ 
++
+ ALL=wrapd
+ 
+ all: $(ALL)

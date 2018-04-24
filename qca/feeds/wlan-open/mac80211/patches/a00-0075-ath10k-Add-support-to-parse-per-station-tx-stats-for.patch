@@ -1,0 +1,205 @@
+--- a/drivers/net/wireless/ath/ath10k/debug.h
++++ b/drivers/net/wireless/ath/ath10k/debug.h
+@@ -49,7 +49,8 @@ enum ath10k_pktlog_filter {
+ 	ATH10K_PKTLOG_RCUPDATE   = 0x000000008,
+ 	ATH10K_PKTLOG_DBG_PRINT  = 0x000000010,
+ 	ATH10K_PKTLOG_SMART_ANT	 = 0x000000020,
+-	ATH10K_PKTLOG_ANY        = 0x00000003f,
++	ATH10K_PKTLOG_PEER_STATS = 0x000000040,
++	ATH10K_PKTLOG_ANY        = 0x00000007f,
+ };
+ 
+ enum ath10k_dbg_aggr_mode {
+@@ -243,12 +244,17 @@ void ath10k_sta_update_rx_duration(struc
+ void ath10k_sta_statistics(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+ 			   struct ieee80211_sta *sta,
+ 			   struct station_info *sinfo);
++int ath10k_debug_tx_peer_stats_enable(struct ath10k *ar);
+ #else
+ static inline
+ void ath10k_sta_update_rx_duration(struct ath10k *ar,
+ 				   struct ath10k_fw_stats *stats)
+ {
+ }
++static inline int ath10k_debug_tx_peer_stats_enable(struct ath10k *ar)
++{
++	return 0;
++}
+ #endif /* CPTCFG_MAC80211_DEBUGFS */
+ void ath10k_dbg_bug_on_fw_assert(struct ath10k *ar);
+ 
+--- a/drivers/net/wireless/ath/ath10k/htt_rx.c
++++ b/drivers/net/wireless/ath/ath10k/htt_rx.c
+@@ -2321,6 +2321,77 @@ out:
+ 	rcu_read_unlock();
+ }
+ 
++void ath10k_fetch_10_2_tx_stats(struct ath10k *ar, u8 *data)
++{
++	struct ath10k_pktlog_hdr *hdr = (struct ath10k_pktlog_hdr *)data;
++	struct ath10k_per_peer_tx_stats *p_tx_stats = &ar->peer_tx_stats;
++	struct ath10k_10_2_peer_tx_stats *tx_stats;
++	struct ieee80211_sta *sta;
++	struct ath10k_sta *arsta;
++	struct ath10k_peer *peer;
++	u16 log_type = __le16_to_cpu(hdr->log_type);
++	u16 log_flags = __le16_to_cpu(hdr->flags);
++	u32 peer_id = 0, i;
++
++	if (log_type != ATH_PKTLOG_TYPE_TX_CTRL &&
++	    log_type != ATH_PKTLOG_TYPE_TX_STAT)
++		return;
++
++	if (log_type == ATH_PKTLOG_TYPE_TX_STAT) {
++ 		if (log_flags & PKTLOG_INFO_FLAG_HW_STATUS_V2)
++			tx_stats = (struct ath10k_10_2_peer_tx_stats *)
++				   ((hdr->payload) +
++				    ATH10K_10_2_TX_STATS_OFFSET_V2);
++		else
++			tx_stats = (struct ath10k_10_2_peer_tx_stats *)
++				   ((hdr->payload) +
++				    ATH10K_10_2_TX_STATS_OFFSET);
++
++		if (!tx_stats->tx_ppdu_cnt)
++			return;
++
++		peer_id = tx_stats->peer_id;
++	} else {
++		u32 *tx_ctrl_desc;
++		tx_ctrl_desc = (u32 *)hdr->payload;
++
++		peer_id = __le32_to_cpu(tx_ctrl_desc[ATH10K_TXC_PEERID]);
++	}
++
++	rcu_read_lock();
++	spin_lock_bh(&ar->data_lock);
++	peer = ath10k_peer_find_by_id(ar, peer_id);
++	if (!peer)
++		goto err;
++
++	sta = peer->sta;
++	if (!sta)
++		goto err;
++
++	arsta = (struct ath10k_sta *)sta->drv_priv;
++	for (i = 0; i < tx_stats->tx_ppdu_cnt; i++) {
++		p_tx_stats->succ_bytes = __le16_to_cpu(tx_stats->success_bytes[i]);
++		p_tx_stats->retry_bytes = __le16_to_cpu(tx_stats->retry_bytes[i]);
++		p_tx_stats->failed_bytes = __le16_to_cpu(tx_stats->failed_bytes[i]);
++		p_tx_stats->ratecode = tx_stats->ratecode[i];
++		p_tx_stats->flags = tx_stats->flags[i];
++		p_tx_stats->succ_pkts = tx_stats->success_pkts[i];
++		p_tx_stats->retry_pkts = tx_stats->retry_pkts[i];
++		p_tx_stats->failed_pkts = tx_stats->failed_pkts[i];
++
++		ath10k_update_per_peer_tx_stats(ar, sta, p_tx_stats);
++	}
++	spin_unlock_bh(&ar->data_lock);
++	rcu_read_unlock();
++
++	return;
++
++err:
++	spin_unlock_bh(&ar->data_lock);
++	rcu_read_unlock();
++	ath10k_warn(ar, "invalid per peer stats received\n");
++}
++
+ bool ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
+ {
+ 	struct ath10k_htt *htt = &ar->htt;
+@@ -2443,6 +2514,8 @@ bool ath10k_htt_t2h_msg_handler(struct a
+ 						 pktlog_msg.payload));
+ 		ath10k_smart_ant_proc_tx_feedback(ar, resp->pktlog_msg.payload);
+ 		ath10k_process_pktlog(ar, resp->pktlog_msg.payload);
++		if (ath10k_peer_stats_enabled(ar))
++			ath10k_fetch_10_2_tx_stats(ar, resp->pktlog_msg.payload);
+ 		break;
+ 	}
+ 	case HTT_T2H_MSG_TYPE_RX_FLUSH: {
+@@ -2487,7 +2560,8 @@ bool ath10k_htt_t2h_msg_handler(struct a
+ 		ath10k_htt_rx_tx_mode_switch_ind(ar, skb);
+ 		break;
+ 	case HTT_T2H_MSG_TYPE_PEER_STATS:
+-		ath10k_htt_fetch_peer_stats(ar, skb);
++		if (ath10k_peer_stats_enabled(ar))
++			ath10k_htt_fetch_peer_stats(ar, skb);
+ 		break;
+ 	case HTT_T2H_MSG_TYPE_EN_STATS:
+ 	default:
+--- a/drivers/net/wireless/ath/ath10k/wmi.h
++++ b/drivers/net/wireless/ath/ath10k/wmi.h
+@@ -4615,7 +4615,7 @@ enum wmi_rate_preamble {
+ #define ATH10K_HW_RATECODE(rate, nss, preamble) \
+ 	(((preamble) << 6) | ((nss) << 4) | (rate))
+ 
+-#define VHT_MCS_NUM     10
++#define VHT_MCS_NUM	10
+ #define VHT_BW_NUM      4
+ #define VHT_NSS_NUM     4
+ 
+--- a/drivers/net/wireless/ath/ath10k/debug.c
++++ b/drivers/net/wireless/ath/ath10k/debug.c
+@@ -2533,6 +2533,16 @@ void ath10k_debug_unregister(struct ath1
+ 	ath10k_deinit_pktlog(ar);
+ }
+ 
++int ath10k_debug_tx_peer_stats_enable(struct ath10k *ar)
++{
++	if (ath10k_peer_stats_enabled(ar)) {
++		ar->debug.pktlog_filter |= ATH10K_PKTLOG_PEER_STATS;
++		/* This is used for per peer tx stats */
++		return ath10k_wmi_pdev_pktlog_enable(ar, ar->debug.pktlog_filter);
++	}
++	return 0;
++}
++
+ #endif /* CPTCFG_ATH10K_DEBUGFS */
+ 
+ #ifdef CPTCFG_ATH10K_DEBUG
+--- a/drivers/net/wireless/ath/ath10k/mac.c
++++ b/drivers/net/wireless/ath/ath10k/mac.c
+@@ -7380,6 +7380,12 @@ ath10k_mac_op_assign_vif_chanctx(struct
+ 		arvif->is_up = true;
+ 	}
+ 
++	ret = ath10k_debug_tx_peer_stats_enable(ar);
++	if (ret) {
++		ath10k_warn(ar, "failed to enable peer stats pktlog: %d\n", ret);
++		goto err_stop;
++	}
++
+ 	ret = ath10k_smart_ant_enable(ar, arvif);
+ 	if (ret) {
+ 		ath10k_warn(ar, "failed to enable smart antenna algorithm %d\n",
+--- a/drivers/net/wireless/ath/ath10k/htt.h
++++ b/drivers/net/wireless/ath/ath10k/htt.h
+@@ -1507,6 +1507,28 @@ struct htt_peer_tx_stats {
+ 	u8 payload[0];
+ } __packed;
+ 
++#ifdef CPTCFG_MAC80211_DEBUGFS
++
++#define ATH10K_10_2_TX_STATS_OFFSET	128
++#define ATH10K_10_2_TX_STATS_OFFSET_V2	136
++#define ATH10K_TX_STATS_NO_OF_COMB_FB	4
++
++struct ath10k_10_2_peer_tx_stats {
++	u8 ratecode[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	u8 success_pkts[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	__le16 success_bytes[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	u8 retry_pkts[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	__le16 retry_bytes[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	u8 failed_pkts[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	__le16 failed_bytes[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	u8 flags[ATH10K_TX_STATS_NO_OF_COMB_FB];
++	__le32 tx_duration;
++	u8 tx_ppdu_cnt;
++	u8 peer_id;
++} __packed;
++
++#endif /*CPTCFG_MAC80211_DEBUGFS*/
++
+ union htt_rx_pn_t {
+ 	/* WEP: 24-bit PN */
+ 	u32 pn24;

@@ -1,0 +1,280 @@
+diff --git a/src/ap/drv_callbacks.c b/src/ap/drv_callbacks.c
+index 22a8b58..069640d 100644
+--- a/src/ap/drv_callbacks.c
++++ b/src/ap/drv_callbacks.c
+@@ -37,6 +37,66 @@
+ #include "mbo_ap.h"
+ #include "pmksa_cache_auth.h"
+ 
++#ifdef CONFIG_FILS
++void hostapd_notify_assoc_fils_finish(struct hostapd_data *hapd, struct sta_info *sta)
++{
++	u16 reply_res = WLAN_STATUS_SUCCESS;
++	struct ieee802_11_elems elems;
++	u8 *p ;
++	int new_assoc;
++
++	wpa_printf(MSG_DEBUG, "%s FILS: Finish association with " , __func__, MACSTR,
++	        MAC2STR(sta->addr));
++	eloop_cancel_timeout(fils_hlp_timeout, hapd, sta);
++	if (!sta->fils_pending_assoc_req)
++		return;
++
++	ieee802_11_parse_elems(sta->fils_pending_assoc_req, sta->fils_pending_assoc_req_len, &elems, 0);
++	if(!elems.fils_session) {
++		wpa_printf(MSG_DEBUG, "%s failed to find elems_fils_session" , __func__);
++		return;
++	}
++
++	p = sta->fils_pending_assoc_resp;
++	p += sta->fils_pending_assoc_resp_len;
++	p = hostapd_eid_assoc_fils_session(hapd, sta->wpa_sm, p,
++									   elems.fils_session, sta->fils_hlp_resp);
++	wpa_hexdump(MSG_DEBUG, "FILS Delayed Assoc Resp BUF",
++			    sta->fils_pending_assoc_resp, p - sta->fils_pending_assoc_resp);
++
++	reply_res = hostapd_sta_assoc(hapd, sta->addr, sta->fils_pending_assoc_is_reassoc,
++					  WLAN_STATUS_SUCCESS, sta->fils_pending_assoc_resp,
++					  (p - sta->fils_pending_assoc_resp));
++	ap_sta_set_authorized(hapd, sta, 1);
++	new_assoc = (sta->flags & WLAN_STA_ASSOC) == 0;
++	sta->flags |= WLAN_STA_AUTH | WLAN_STA_ASSOC;
++	sta->flags &= ~WLAN_STA_WNM_SLEEP_MODE;
++	hostapd_set_sta_flags(hapd, sta);
++	wpa_auth_sm_event(sta->wpa_sm, WPA_ASSOC_FILS);
++	ieee802_1x_notify_port_enabled(sta->eapol_sm, 1);
++	hostapd_new_assoc_sta(hapd, sta, !new_assoc);
++	os_free(sta->fils_pending_assoc_resp);
++	os_free(sta->fils_pending_assoc_req);
++	sta->fils_pending_assoc_resp_len = 0;
++	sta->fils_pending_assoc_req = NULL;
++	sta->fils_pending_assoc_req_len = 0;
++	wpabuf_free(sta->fils_hlp_resp);
++	sta->fils_hlp_resp = NULL;
++	wpabuf_free(sta->hlp_dhcp_discover);
++	sta->hlp_dhcp_discover = NULL;
++
++	/*
++	 * Remove the station in case tranmission of a success response fails
++	 * (the STA was added associated to the driver) or if the station was
++	 * previously added unassociated.
++	 */
++	if (reply_res != WLAN_STATUS_SUCCESS || sta->added_unassoc) {
++		hostapd_drv_sta_remove(hapd, sta->addr);
++		sta->added_unassoc = 0;
++	}
++}
++#endif /* CONFIG_FILS */
++
+ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
+ 			const u8 *req_ies, size_t req_ies_len, int reassoc)
+ {
+@@ -52,6 +112,9 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
+ 	u16 reason = WLAN_REASON_UNSPECIFIED;
+ 	u16 status = WLAN_STATUS_SUCCESS;
+ 	const u8 *p2p_dev_addr = NULL;
++#if CONFIG_FILS
++	int delay_assoc = 0;
++#endif
+ 
+ 	if (addr == NULL) {
+ 		/*
+@@ -403,12 +466,55 @@ skip_wpa_check:
+ 			return WLAN_STATUS_UNSPECIFIED_FAILURE;
+ 		}
+ 
+-		if(!elems.fils_session) {
+-			wpa_printf(MSG_DEBUG, "fils_session element not found \n");
+-			return WLAN_STATUS_UNSPECIFIED_FAILURE;
++		if (fils_process_hlp(hapd, sta, req_ies, req_ies_len) > 0) {
++			wpa_printf(MSG_DEBUG, "%s FILS: Delaying Assoc Response\n",__func__);
++			delay_assoc = 1;
++		} else {
++			wpa_printf(MSG_DEBUG, "%s FILS: Going ahead with assoc Response\n",__func__);
+ 		}
+ 
+-		p = hostapd_eid_assoc_fils_session(hapd, sta->wpa_sm, p, elems.fils_session);
++		if (sta) {
++			wpa_printf(MSG_DEBUG, "FILS: %s HLP cb cleanup\n",__func__);
++			eloop_cancel_timeout(fils_hlp_timeout, hapd, sta);
++			os_free(sta->fils_pending_assoc_req);
++			sta->fils_pending_assoc_req = NULL;
++			sta->fils_pending_assoc_req_len = 0;
++			wpabuf_free(sta->fils_hlp_resp);
++			sta->fils_hlp_resp = NULL;
++			os_memset(&sta->fils_pending_assoc_resp, 0, sizeof(sta->fils_pending_assoc_resp));
++			sta->fils_pending_assoc_resp_len = 0;
++			sta->fils_pending_assoc_finish = NULL;
++		}
++		if (sta && delay_assoc && status == WLAN_STATUS_SUCCESS) {
++			u8 *req_tmp = NULL;
++			u8 *resp_tmp = NULL;
++			req_tmp = os_malloc(req_ies_len);
++			if(!req_tmp) {
++				wpa_printf(MSG_DEBUG, "buffer allocation failed for assoc req\n");
++				goto fail;
++			}
++			resp_tmp = os_malloc(sizeof(struct ieee80211_mgmt) + 1024);
++			if(!resp_tmp) {
++				wpa_printf(MSG_DEBUG, "buffer allocation failed for assoc resp\n");
++				os_free(req_tmp);
++				goto fail;
++			}
++			os_memcpy(req_tmp, req_ies, req_ies_len);
++			sta->fils_pending_assoc_req = req_tmp;
++			sta->fils_pending_assoc_req_len = req_ies_len;
++			sta->fils_pending_assoc_is_reassoc = reassoc;
++			sta->fils_pending_assoc_resp_len = p - buf;
++			sta->fils_pending_assoc_resp = resp_tmp;
++			sta->fils_pending_assoc_finish = hostapd_notify_assoc_fils_finish;
++			wpa_printf(MSG_DEBUG,
++					   "FILS: Waiting for HLP processing before sending (Re)Association Response frame to "
++					   MACSTR, MAC2STR(sta->addr));
++			eloop_cancel_timeout(fils_hlp_timeout, hapd, sta);
++			eloop_register_timeout(0, hapd->conf->fils_hlp_wait_time * 1024,
++				fils_hlp_timeout, hapd, sta);
++			return;
++		}
++		p = hostapd_eid_assoc_fils_session(hapd, sta->wpa_sm, p, elems.fils_session, sta->fils_hlp_resp);
+ 		wpa_hexdump(MSG_DEBUG, "FILS Assoc Resp BUF (IEs)", buf, p - buf);
+ 	}
+ #endif /* CONFIG_FILS */
+diff --git a/src/ap/fils_hlp.c b/src/ap/fils_hlp.c
+index 3fc8721..e20ecde 100644
+--- a/src/ap/fils_hlp.c
++++ b/src/ap/fils_hlp.c
+@@ -263,6 +263,7 @@ static void fils_dhcp_handler(int sd, void *eloop_ctx, void *sock_ctx)
+ 	iph->ihl = sizeof(*iph) / 4;
+ 	iph->tot_len = htons(sizeof(*iph) + sizeof(*udph) + (end - pos));
+ 	iph->ttl = 1;
++	iph->protocol = 17;
+ 	iph->saddr = hapd->conf->dhcp_server.u.v4.s_addr;
+ 	iph->daddr = dhcp->client_ip;
+ 	iph->check = ip_checksum(iph, sizeof(*iph));
+@@ -313,7 +314,13 @@ static void fils_dhcp_handler(int sd, void *eloop_ctx, void *sock_ctx)
+ 		left -= len;
+ 	}
+ 	wpabuf_free(resp);
+-	fils_hlp_finish_assoc(hapd, sta);
++
++	if (sta->fils_pending_assoc_finish) {
++		wpa_printf(MSG_DEBUG, "%s calling fils_pending_assoc_finish\n",__func__);
++		sta->fils_pending_assoc_finish(hapd, sta);
++	} else {
++		wpa_printf(MSG_DEBUG, "%sERROR! fils_pending_assoc_finish cb NULL\n",__func__);
++	}
+ }
+ 
+ 
+diff --git a/src/ap/ieee802_11.c b/src/ap/ieee802_11.c
+index 076a992..4374e59 100644
+--- a/src/ap/ieee802_11.c
++++ b/src/ap/ieee802_11.c
+@@ -2540,9 +2540,14 @@ void fils_hlp_timeout(void *eloop_ctx, void *eloop_data)
+ 	wpa_printf(MSG_DEBUG,
+ 		   "FILS: HLP response timeout - continue with association response for "
+ 		   MACSTR, MAC2STR(sta->addr));
+-	fils_hlp_finish_assoc(hapd, sta);
+-}
+ 
++	if (sta->fils_pending_assoc_finish) {
++		wpa_printf(MSG_DEBUG, "%s calling fils_pending_assoc_finish cb\n",__func__);
++		sta->fils_pending_assoc_finish(hapd, sta);
++	} else {
++		wpa_printf(MSG_DEBUG, "%s ERROR!! fils_pending_assoc_finish cb NULL\n",__func__);
++	}
++}
+ #endif /* CONFIG_FILS */
+ 
+ 
+@@ -2888,6 +2893,7 @@ static void handle_assoc(struct hostapd_data *hapd,
+ 		os_free(sta->fils_pending_assoc_req);
+ 		sta->fils_pending_assoc_req = NULL;
+ 		sta->fils_pending_assoc_req_len = 0;
++		sta->fils_pending_assoc_finish = NULL;
+ 		wpabuf_free(sta->fils_hlp_resp);
+ 		sta->fils_hlp_resp = NULL;
+ 	}
+@@ -2895,6 +2901,7 @@ static void handle_assoc(struct hostapd_data *hapd,
+ 		sta->fils_pending_assoc_req = tmp;
+ 		sta->fils_pending_assoc_req_len = left;
+ 		sta->fils_pending_assoc_is_reassoc = reassoc;
++		sta->fils_pending_assoc_finish = fils_hlp_finish_assoc;
+ 		wpa_printf(MSG_DEBUG,
+ 			   "FILS: Waiting for HLP processing before sending (Re)Association Response frame to "
+ 			   MACSTR, MAC2STR(sta->addr));
+diff --git a/src/ap/sta_info.h b/src/ap/sta_info.h
+index a604ded..60d30b3 100644
+--- a/src/ap/sta_info.h
++++ b/src/ap/sta_info.h
+@@ -237,6 +237,9 @@ struct sta_info {
+ 							u16 resp, struct rsn_pmksa_cache_entry *pmksa,
+ 							struct wpabuf *erp_resp, const u8 *msk,
+ 							size_t msk_len, u16 auth_transaction);
++	u8 *fils_pending_assoc_resp;
++	void (*fils_pending_assoc_finish)(struct hostapd_data *hapd, struct sta_info *sta);
++	size_t fils_pending_assoc_resp_len;
+ #endif /* CONFIG_FILS */
+ };
+ 
+diff --git a/src/ap/wpa_auth.c b/src/ap/wpa_auth.c
+index 1cab179..79fcd8f 100644
+--- a/src/ap/wpa_auth.c
++++ b/src/ap/wpa_auth.c
+@@ -2156,7 +2156,7 @@ static int wpa_aead_decrypt(struct wpa_state_machine *sm, struct wpa_ptk *ptk,
+ 
+ u8 * hostapd_eid_assoc_fils_session(struct hostapd_data *hapd,
+                                     struct wpa_state_machine *sm, u8 *buf,
+-                                    const u8 *fils_session)
++                                    const u8 *fils_session, struct wpabuf *hlp)
+ {
+ 	struct wpabuf *plain = NULL;
+ 	u8 *pos = buf;
+@@ -2168,7 +2168,7 @@ u8 * hostapd_eid_assoc_fils_session(struct hostapd_data *hapd,
+ 	os_memcpy(pos, fils_session, FILS_SESSION_LEN);
+ 	pos += FILS_SESSION_LEN;
+ 
+-	plain = fils_prepare_plainbuf(sm, NULL);
++	plain = fils_prepare_plainbuf(sm, hlp);
+ 	if(!plain) {
+ 		wpa_printf(MSG_DEBUG,"FILS: Plain Buffer prep failed\n");
+ 		return NULL;
+@@ -2242,6 +2242,11 @@ int wpa_fils_validate_keyconfirm(struct wpa_state_machine *sm, const u8 *ies,
+ 		return -1;
+ 	}
+ 
++	if(!elems.fils_session) {
++		wpa_printf(MSG_DEBUG, "fils_session element not found \n");
++		return -1;
++	}
++
+ 	if (!elems.fils_key_confirm) {
+ 		wpa_printf(MSG_DEBUG, "FILS: No FILS Key Confirm element");
+ 		return -1;
+@@ -2480,8 +2485,11 @@ struct wpabuf *fils_prepare_plainbuf(struct wpa_state_machine *sm, const struct
+ 	wpabuf_put_data(plain, sm->fils_key_auth_ap, sm->fils_key_auth_len);
+ 
+ 	/* FILS HLP Container */
+-	if (hlp)
++	if (hlp) {
+ 		wpabuf_put_buf(plain, hlp);
++	} else {
++		wpa_printf(MSG_DEBUG,"%s FILS: HLP Not found. Not appending assoc resp\n",__func__);
++	}
+ 
+ 	/* TODO: FILS IP Address Assignment */
+ 
+diff --git a/src/ap/wpa_auth.h b/src/ap/wpa_auth.h
+index 0a6140f..9682dec 100644
+--- a/src/ap/wpa_auth.h
++++ b/src/ap/wpa_auth.h
+@@ -366,7 +366,8 @@ int fils_encrypt_assoc(struct wpa_state_machine *sm, u8 *buf,
+ struct wpabuf *fils_prepare_plainbuf(struct wpa_state_machine *sm, const struct wpabuf *hlp);
+ int fils_set_tk(struct wpa_state_machine *sm);
+ u8 *hostapd_eid_assoc_fils_session(struct hostapd_data *hapd,
+-                                   struct wpa_state_machine *sm, u8 *eid, const u8 *fils_session);
++                                   struct wpa_state_machine *sm, u8 *eid, const u8 *fils_session,
++                                   struct wpabuf *fils_hlp_resp);
+ int wpa_fils_validate_filssession(struct wpa_state_machine *sm, const u8 *ies,
+ 								  size_t ies_len, const u8 *fils_session);
+ int wpa_fils_validate_keyconfirm(struct wpa_state_machine *sm, const u8 *ies,

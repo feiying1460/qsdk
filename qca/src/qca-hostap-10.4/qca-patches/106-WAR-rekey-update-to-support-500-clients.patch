@@ -1,0 +1,26 @@
+diff --git a/src/ap/wpa_auth.c b/src/ap/wpa_auth.c
+index f409b4e..c134d89 100644
+--- a/src/ap/wpa_auth.c
++++ b/src/ap/wpa_auth.c
+@@ -60,7 +60,7 @@ static void wpa_group_put(struct wpa_authenticator *wpa_auth,
+ 			  struct wpa_group *group);
+ static u8 * ieee80211w_kde_add(struct wpa_state_machine *sm, u8 *pos);
+ 
+-static const u32 dot11RSNAConfigGroupUpdateCount = 4;
++static const u32 dot11RSNAConfigGroupUpdateCount = 10;
+ static const u32 dot11RSNAConfigPairwiseUpdateCount = 4;
+ static const u32 eapol_key_timeout_first = 100; /* ms */
+ static const u32 eapol_key_timeout_subseq = 1000; /* ms */
+diff --git a/src/drivers/driver_atheros.c b/src/drivers/driver_atheros.c
+index a88345f..11555a4 100644
+--- a/src/drivers/driver_atheros.c
++++ b/src/drivers/driver_atheros.c
+@@ -1588,6 +1588,8 @@ atheros_send_eapol(void *priv, const u8 *addr, const u8 *data, size_t data_len,
+ 
+ 	wpa_hexdump(MSG_MSGDUMP, "TX EAPOL", bp, len);
+ 
++        /* Delay added as workaround for handling 500 clients group rekeying */
++	os_sleep(0, 10000);
+ 	status = l2_packet_send(drv->sock_xmit, addr, ETH_P_EAPOL, bp, len);
+ 
+ 	if (bp != buf)

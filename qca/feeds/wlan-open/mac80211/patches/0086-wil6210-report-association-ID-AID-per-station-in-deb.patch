@@ -1,0 +1,53 @@
+--- a/drivers/net/wireless/ath/wil6210/debugfs.c
++++ b/drivers/net/wireless/ath/wil6210/debugfs.c
+@@ -1379,6 +1379,7 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
+ 	for (i = 0; i < ARRAY_SIZE(wil->sta); i++) {
+ 		struct wil_sta_info *p = &wil->sta[i];
+ 		char *status = "unknown";
++		u8 aid = 0;
+ 
+ 		switch (p->status) {
+ 		case wil_sta_unused:
+@@ -1389,9 +1390,10 @@ __acquires(&p->tid_rx_lock) __releases(&p->tid_rx_lock)
+ 			break;
+ 		case wil_sta_connected:
+ 			status = "connected";
++			aid = p->aid;
+ 			break;
+ 		}
+-		seq_printf(s, "[%d] %pM %s\n", i, p->addr, status);
++		seq_printf(s, "[%d] %pM %s AID %d\n", i, p->addr, status, aid);
+ 
+ 		if (p->status == wil_sta_connected) {
+ 			spin_lock_bh(&p->tid_rx_lock);
+--- a/drivers/net/wireless/ath/wil6210/wil6210.h
++++ b/drivers/net/wireless/ath/wil6210/wil6210.h
+@@ -524,6 +524,7 @@ struct wil_sta_info {
+ 	unsigned long tid_rx_stop_requested[BITS_TO_LONGS(WIL_STA_TID_NUM)];
+ 	struct wil_tid_crypto_rx tid_crypto_rx[WIL_STA_TID_NUM];
+ 	struct wil_tid_crypto_rx group_crypto_rx;
++	u8 aid; /* 1-254; 0 if unknown/not reported */
+ };
+ 
+ enum {
+--- a/drivers/net/wireless/ath/wil6210/wmi.c
++++ b/drivers/net/wireless/ath/wil6210/wmi.c
+@@ -517,8 +517,8 @@ static void wmi_evt_connect(struct wil6210_priv *wil, int id, void *d, int len)
+ 	}
+ 
+ 	ch = evt->channel + 1;
+-	wil_info(wil, "Connect %pM channel [%d] cid %d\n",
+-		 evt->bssid, ch, evt->cid);
++	wil_info(wil, "Connect %pM channel [%d] cid %d aid %d\n",
++		 evt->bssid, ch, evt->cid, evt->aid);
+ 	wil_hex_dump_wmi("connect AI : ", DUMP_PREFIX_OFFSET, 16, 1,
+ 			 evt->assoc_info, len - sizeof(*evt), true);
+ 
+@@ -626,6 +626,7 @@ static void wmi_evt_connect(struct wil6210_priv *wil, int id, void *d, int len)
+ 	}
+ 
+ 	wil->sta[evt->cid].status = wil_sta_connected;
++	wil->sta[evt->cid].aid = evt->aid;
+ 	set_bit(wil_status_fwconnected, wil->status);
+ 	wil_update_net_queues_bh(wil, NULL, false);
+ 

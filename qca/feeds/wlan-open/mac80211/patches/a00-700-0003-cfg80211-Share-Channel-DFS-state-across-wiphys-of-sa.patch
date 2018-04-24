@@ -1,0 +1,371 @@
+--- a/net/wireless/mlme.c
++++ b/net/wireless/mlme.c
+@@ -18,7 +18,6 @@
+ #include "nl80211.h"
+ #include "rdev-ops.h"
+ 
+-
+ void cfg80211_rx_assoc_resp(struct net_device *dev, struct cfg80211_bss *bss,
+ 			    const u8 *buf, size_t len, int uapsd_queues)
+ {
+@@ -811,6 +810,27 @@ static bool cfg80211_5ghz_is_wiphy_oper_
+ 	return ret;
+ }
+ 
++static bool cfg80211_5ghz_any_wiphy_oper_chan(struct wiphy *wiphy,
++					      struct ieee80211_channel *chan)
++{
++	struct cfg80211_registered_device *rdev;
++
++	ASSERT_RTNL();
++
++	if (!(chan->flags & IEEE80211_CHAN_RADAR))
++		return false;
++
++	list_for_each_entry(rdev, &cfg80211_rdev_list, list) {
++		if (!reg_dfs_domain_same(wiphy, &rdev->wiphy))
++			continue;
++
++		if (cfg80211_5ghz_is_wiphy_oper_chan(&rdev->wiphy, chan))
++			return true;
++	}
++
++	return false;
++}
++
+ void cfg80211_dfs_channels_update_work(struct work_struct *work)
+ {
+ 	struct delayed_work *delayed_work = to_delayed_work(work);
+@@ -850,7 +870,7 @@ void cfg80211_dfs_channels_update_work(s
+ 				radar_event = NL80211_RADAR_NOP_FINISHED;
+ 			} else {
+ 				if (regulatory_pre_cac_allowed(wiphy) ||
+-				    cfg80211_5ghz_is_wiphy_oper_chan(wiphy, c))
++				    cfg80211_5ghz_any_wiphy_oper_chan(wiphy, c))
+ 					continue;
+ 
+ 				time_dfs_update =
+@@ -871,6 +891,10 @@ void cfg80211_dfs_channels_update_work(s
+ 				nl80211_radar_notify(rdev, &chandef,
+ 						     radar_event, NULL,
+ 						     GFP_ATOMIC);
++
++				regulatory_propagate_dfs_state(wiphy, &chandef,
++							       c->dfs_state,
++							       radar_event);
+ 				continue;
+ 			}
+ 
+@@ -907,6 +931,9 @@ void cfg80211_radar_event(struct wiphy *
+ 	cfg80211_sched_dfs_chan_update(rdev);
+ 
+ 	nl80211_radar_notify(rdev, chandef, NL80211_RADAR_DETECTED, NULL, gfp);
++
++	regulatory_propagate_dfs_state(wiphy, chandef, NL80211_DFS_UNAVAILABLE,
++				       NL80211_RADAR_DETECTED);
+ }
+ EXPORT_SYMBOL(cfg80211_radar_event);
+ 
+@@ -933,6 +960,8 @@ void cfg80211_cac_event(struct net_devic
+ 			  msecs_to_jiffies(wdev->cac_time_ms);
+ 		WARN_ON(!time_after_eq(jiffies, timeout));
+ 		cfg80211_set_dfs_state(wiphy, chandef, NL80211_DFS_AVAILABLE);
++		regulatory_propagate_dfs_state(wiphy, chandef,
++					       NL80211_DFS_AVAILABLE, event);
+ 		cfg80211_sched_dfs_chan_update(rdev);
+ 		break;
+ 	case NL80211_RADAR_CAC_ABORTED:
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -214,6 +214,25 @@ static DECLARE_DELAYED_WORK(reg_check_ch
+ static void reg_todo(struct work_struct *work);
+ static DECLARE_WORK(reg_work, reg_todo);
+ 
++/* List of dfs state change request which could be propagated to other wiphys */
++static LIST_HEAD(reg_dfs_state_list);
++static spinlock_t reg_dfs_state_list_lock;
++
++struct reg_dfs_state {
++	struct list_head list;
++	int wiphy_idx;
++	struct ieee80211_channel chan;
++	enum nl80211_chan_width chan_width;
++	u32 center_freq1;
++	u32 center_freq2;
++	enum nl80211_dfs_state dfs_state;
++	enum nl80211_radar_event event;
++};
++
++static void reg_handle_propagate_dfs_state(struct work_struct *work);
++static DECLARE_WORK(reg_propagate_dfs_state_work,
++		    reg_handle_propagate_dfs_state);
++
+ /* We keep a static world regulatory domain in case of the absence of CRDA */
+ static const struct ieee80211_regdomain world_regdom = {
+ 	.n_reg_rules = 8,
+@@ -2080,6 +2099,83 @@ reg_process_hint_country_ie(struct wiphy
+ 	return REG_REQ_IGNORE;
+ }
+ 
++bool reg_dfs_domain_same(struct wiphy *wiphy1, struct wiphy *wiphy2)
++{
++	const struct ieee80211_regdomain *wiphy1_regd = NULL;
++	const struct ieee80211_regdomain *wiphy2_regd = NULL;
++	const struct ieee80211_regdomain *cfg80211_regd = NULL;
++	bool dfs_domain_same = false;
++
++	rcu_read_lock();
++
++	cfg80211_regd = rcu_dereference(cfg80211_regdomain);
++	wiphy1_regd = rcu_dereference(wiphy1->regd);
++	if (!wiphy1_regd)
++		wiphy1_regd = cfg80211_regd;
++
++	wiphy2_regd = rcu_dereference(wiphy2->regd);
++	if (!wiphy2_regd)
++		wiphy2_regd = cfg80211_regd;
++
++	if (wiphy1_regd->dfs_region == wiphy2_regd->dfs_region)
++		dfs_domain_same = true;
++
++	rcu_read_unlock();
++
++	return dfs_domain_same;
++}
++
++static void reg_copy_dfs_chan_state(struct ieee80211_channel *dst_chan,
++				    struct ieee80211_channel *src_chan)
++{
++	if (!(dst_chan->flags & IEEE80211_CHAN_RADAR) ||
++	    !(src_chan->flags & IEEE80211_CHAN_RADAR))
++		return;
++
++	if (dst_chan->flags & IEEE80211_CHAN_DISABLED ||
++	    src_chan->flags & IEEE80211_CHAN_DISABLED)
++		return;
++
++	if (src_chan->center_freq == dst_chan->center_freq &&
++	    dst_chan->dfs_state == NL80211_DFS_USABLE) {
++		dst_chan->dfs_state = src_chan->dfs_state;
++		dst_chan->dfs_state_entered = jiffies;
++	}
++}
++
++static void wiphy_share_dfs_chan_state(struct wiphy *dst_wiphy,
++				       struct wiphy *src_wiphy)
++{
++	struct ieee80211_supported_band *src_sband, *dst_sband;
++	int i, j;
++
++	dst_sband = dst_wiphy->bands[NL80211_BAND_5GHZ];
++	src_sband = src_wiphy->bands[NL80211_BAND_5GHZ];
++	if (!dst_sband || !src_sband)
++		return;
++
++	if (!reg_dfs_domain_same(dst_wiphy, src_wiphy))
++		return;
++
++	for (i = 0; i < dst_sband->n_channels; i++)
++		for (j = 0; j < src_sband->n_channels; j++)
++			reg_copy_dfs_chan_state(&dst_sband->channels[i],
++						&src_sband->channels[j]);
++}
++
++static void wiphy_all_share_dfs_chan_state(struct wiphy *wiphy)
++{
++	struct cfg80211_registered_device *rdev;
++
++	ASSERT_RTNL();
++
++	list_for_each_entry(rdev, &cfg80211_rdev_list, list) {
++		if (wiphy == &rdev->wiphy)
++			continue;
++		wiphy_share_dfs_chan_state(wiphy, &rdev->wiphy);
++	}
++}
++
+ /* This processes *all* regulatory hints */
+ static void reg_process_hint(struct regulatory_request *reg_request)
+ {
+@@ -2123,6 +2219,7 @@ static void reg_process_hint(struct regu
+ 	if (treatment == REG_REQ_ALREADY_SET && wiphy &&
+ 	    wiphy->regulatory_flags & REGULATORY_STRICT_REG) {
+ 		wiphy_update_regulatory(wiphy, reg_request->initiator);
++		wiphy_all_share_dfs_chan_state(wiphy);
+ 		reg_check_channels();
+ 	}
+ 
+@@ -3074,6 +3171,7 @@ void wiphy_regulatory_register(struct wi
+ 
+ 	lr = get_last_request();
+ 	wiphy_update_regulatory(wiphy, lr->initiator);
++	wiphy_all_share_dfs_chan_state(wiphy);
+ }
+ 
+ void wiphy_regulatory_deregister(struct wiphy *wiphy)
+@@ -3180,6 +3278,100 @@ unsigned long regulatory_get_pre_cac_tim
+ 	return -1;
+ }
+ 
++static void reg_propagate_dfs_state(struct reg_dfs_state *dfs_state_info)
++{
++	struct cfg80211_registered_device *rdev;
++	struct wiphy *wiphy;
++	struct cfg80211_chan_def chandef;
++
++	rtnl_lock();
++
++	wiphy = wiphy_idx_to_wiphy(dfs_state_info->wiphy_idx);
++	if (!wiphy) {
++		rtnl_unlock();
++		return;
++	}
++
++	list_for_each_entry(rdev, &cfg80211_rdev_list, list) {
++		if (wiphy == &rdev->wiphy)
++			continue;
++
++		if (!reg_dfs_domain_same(wiphy, &rdev->wiphy))
++			continue;
++
++		chandef.chan = &dfs_state_info->chan;
++		chandef.width = dfs_state_info->chan_width;
++		chandef.center_freq1 = dfs_state_info->center_freq1;
++		chandef.center_freq2 = dfs_state_info->center_freq2;
++
++		cfg80211_set_dfs_state(&rdev->wiphy, &chandef,
++				       dfs_state_info->dfs_state);
++
++		if (dfs_state_info->event == NL80211_RADAR_DETECTED ||
++		    dfs_state_info->event == NL80211_RADAR_CAC_FINISHED)
++			cfg80211_sched_dfs_chan_update(rdev);
++
++		nl80211_radar_notify(rdev, &chandef, dfs_state_info->event,
++				     NULL, GFP_KERNEL);
++	}
++
++	rtnl_unlock();
++}
++
++static void reg_handle_propagate_dfs_state(struct work_struct *work)
++{
++	struct reg_dfs_state *dfs_state_info, *tmp;
++	struct list_head dfs_state_list;
++
++	INIT_LIST_HEAD(&dfs_state_list);
++
++	spin_lock_bh(&reg_dfs_state_list_lock);
++	list_splice_tail_init(&reg_dfs_state_list, &dfs_state_list);
++	spin_unlock_bh(&reg_dfs_state_list_lock);
++
++	list_for_each_entry_safe(dfs_state_info, tmp, &dfs_state_list, list) {
++		reg_propagate_dfs_state(dfs_state_info);
++		list_del(&dfs_state_info->list);
++		kfree(dfs_state_info);
++	}
++}
++
++/*
++ * Propagate DFS a state change happened on a channel associated to
++ * a particular wiphy to same channel of other wiphys having same
++ * DFS domain.
++ */
++void regulatory_propagate_dfs_state(struct wiphy *wiphy,
++				    const struct cfg80211_chan_def *chandef,
++				    enum nl80211_dfs_state dfs_state,
++				    enum nl80211_radar_event event)
++{
++	struct reg_dfs_state *dfs_state_info;
++
++	if (WARN_ON(!cfg80211_chandef_valid(chandef)))
++                return;
++
++	dfs_state_info = kzalloc(sizeof(*dfs_state_info), GFP_KERNEL);
++	/* XXX: Should we throw a debug message upon allocation failure? */
++	if (!dfs_state_info)
++		return;
++
++	dfs_state_info->wiphy_idx = get_wiphy_idx(wiphy);
++	memcpy(&dfs_state_info->chan, chandef->chan,
++	       sizeof(struct ieee80211_channel));
++	dfs_state_info->chan_width = chandef->width;
++	dfs_state_info->center_freq1 = chandef->center_freq1;
++	dfs_state_info->center_freq2 = chandef->center_freq2;
++	dfs_state_info->event = event;
++	dfs_state_info->dfs_state = dfs_state;
++
++	spin_lock_bh(&reg_dfs_state_list_lock);
++	list_add_tail(&dfs_state_info->list, &reg_dfs_state_list);
++	spin_unlock_bh(&reg_dfs_state_list_lock);
++
++	schedule_work(&reg_propagate_dfs_state_work);
++}
++
+ int __init regulatory_init(void)
+ {
+ 	int err = 0;
+@@ -3192,6 +3384,8 @@ int __init regulatory_init(void)
+ 	spin_lock_init(&reg_pending_beacons_lock);
+ 	spin_lock_init(&reg_indoor_lock);
+ 
++	spin_lock_init(&reg_dfs_state_list_lock);
++
+ 	reg_regdb_size_check();
+ 
+ 	rcu_assign_pointer(cfg80211_regdomain, cfg80211_world_regdom);
+@@ -3231,11 +3425,14 @@ void regulatory_exit(void)
+ {
+ 	struct regulatory_request *reg_request, *tmp;
+ 	struct reg_beacon *reg_beacon, *btmp;
++	struct reg_dfs_state *reg_dfs_state, *dfs_tmp;
+ 
+ 	cancel_work_sync(&reg_work);
+ 	cancel_crda_timeout_sync();
+ 	cancel_delayed_work_sync(&reg_check_chans);
+ 
++	cancel_work_sync(&reg_propagate_dfs_state_work);
++
+ 	/* Lock to suppress warnings */
+ 	rtnl_lock();
+ 	reset_regdomains(true, NULL);
+@@ -3259,4 +3456,10 @@ void regulatory_exit(void)
+ 		list_del(&reg_request->list);
+ 		kfree(reg_request);
+ 	}
++
++	list_for_each_entry_safe(reg_dfs_state, dfs_tmp, &reg_dfs_state_list,
++				 list) {
++		list_del(&reg_dfs_state->list);
++		kfree(reg_dfs_state);
++	}
+ }
+--- a/net/wireless/reg.h
++++ b/net/wireless/reg.h
+@@ -157,4 +157,27 @@ bool regulatory_pre_cac_allowed(struct w
+  *	applied on the dfs channels associated to this wiphy.
+  */
+ unsigned long regulatory_get_pre_cac_timeout(struct wiphy *wiphy);
++
++/**
++ * regulatory_propagate_dfs_state - Propagate dfs state change to other wiphys
++ * @wiphy - wiphy on which dfs state change is originated.
++ * @chandef - definition of the channel which has gone through dfs state change.
++ * @event - Type of Radar event notified to userspace after dfs state change.
++ *
++ * The channel dfs state of the current wiphy on which dfs state change has been
++ * triggered has to be updated before calling this function. This function will
++ * initiate dfs state propagation on the same frequency for all other wiphys
++ * which share the same DFS domain configuration as the current wiphy.
++ */
++void regulatory_propagate_dfs_state(struct wiphy *wiphy,
++				    const struct cfg80211_chan_def *chandef,
++				    enum nl80211_dfs_state dfs_state,
++				    enum nl80211_radar_event event);
++
++/**
++ * reg_dfs_domain_same - Checks if both wiphy have same DFS domain configured
++ * @wiphy1 - wiphy it's dfs_region to be checked against that of wiphy2
++ * @wiphy2 - wiphy it's dfs_region to be checked against that of wiphy1
++ */
++bool reg_dfs_domain_same(struct wiphy *wiphy1, struct wiphy *wiphy2);
+ #endif  /* __NET_WIRELESS_REG_H */

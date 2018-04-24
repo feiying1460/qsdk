@@ -1,0 +1,652 @@
+/*
+ * Copyright (c) 2011 Qualcomm Atheros, Inc.
+ * All Rights Reserved.
+ * Qualcomm Atheros Confidential and Proprietary.
+ */
+
+#include "ol_ratetable.h"
+
+static AR6000_PHY_STRUCT gpPhyStruct;
+
+/* func to return rate modulation given code spatial width
+    parameter width in VHT mode has the following values
+    0: VHT 20 MHz
+    1: VHT 40 MHz
+    2: VHT 80 MHz
+    3: VHT 160 MHZ
+
+*/
+WHAL_WLAN_MODULATION_TYPE AR600PGetModulation(A_UINT8 code, A_UINT8 width)
+{
+    static const WHAL_WLAN_MODULATION_TYPE _vht_bw_mod[4] = {
+                        WHAL_MOD_IEEE80211_T_VHT_20,
+                        WHAL_MOD_IEEE80211_T_VHT_40,
+                        WHAL_MOD_IEEE80211_T_VHT_80,
+                        WHAL_MOD_IEEE80211_T_VHT_160};
+
+    WHAL_WLAN_MODULATION_TYPE res;
+    A_UINT32 pream_type = AR600P_GET_HW_RATECODE_PREAM(code);
+
+    switch(pream_type){
+        case AR600P_HW_RATECODE_PREAM_HT:
+
+            if(width)
+                res = WHAL_MOD_IEEE80211_T_HT_40;
+            else
+                res = WHAL_MOD_IEEE80211_T_HT_20;
+            break;
+
+        case AR600P_HW_RATECODE_PREAM_CCK:
+            res = WHAL_MOD_IEEE80211_T_CCK;
+            break;
+
+        case AR600P_HW_RATECODE_PREAM_VHT:
+            res = _vht_bw_mod[width];
+        break;
+
+        default:
+            res = WHAL_MOD_IEEE80211_T_OFDM;
+            break;
+    }
+
+    return res;
+}
+
+/* return rate table index given rate code parameters;
+ * code: hw ratecode
+ * width: 1 = 40MHz, 0 = 20MHz HT operation.
+    3 = 160 (80+80) MHz VHT, 2 = 80 MHz VHT, 1 = 40MHz VHT, 0 = 20MHz VHT.
+ * sgi: 1 = short guard interval, 0 = regular guard interval for HT/VHT operation.
+ */
+A_UINT8 AR600PRcToIndex(void* rt, A_UINT8 code, A_UINT8 width)
+{
+    A_UINT8 res = RT_INVALID_INDEX; /* represents failure */
+    WHAL_WLAN_MODULATION_TYPE mod = RT_DERIVE_PHY(rt, code, width);
+    static const A_UINT8 _rc_idx[WHAL_MOD_IEEE80211_T_MAX_PHY] = {
+        /*[WHAL_MOD_IEEE80211_T_DS]     */ CCK_RATE_TABLE_INDEX ,
+        /*[WHAL_MOD_IEEE80211_T_OFDM]   */ OFDM_RATE_TABLE_INDEX,
+        /*[WHAL_MOD_IEEE80211_T_HT_20]  */ HT_20_RATE_TABLE_INDEX,
+        /*[WHAL_MOD_IEEE80211_T_HT_40]  */ HT_40_RATE_TABLE_INDEX,
+        /*[WHAL_MOD_IEEE80211_T_VHT_20] */ VHT_20_RATE_TABLE_INDEX,
+        /*[WHAL_MOD_IEEE80211_T_VHT_40] */ VHT_40_RATE_TABLE_INDEX,
+        /*[WHAL_MOD_IEEE80211_T_VHT_80] */ VHT_80_RATE_TABLE_INDEX,
+    };
+
+    A_UINT8 rc, nss, pream;
+
+    rc = AR600P_GET_HW_RATECODE_RATE(code);
+    nss = AR600P_GET_HW_RATECODE_NSS(code);
+    pream = AR600P_GET_HW_RATECODE_PREAM(code);
+
+        /* get the base of corresponding rate table  entry */
+    res = _rc_idx[mod];
+    switch (pream) {
+            case AR600P_HW_RATECODE_PREAM_VHT:
+                /* res += (rc + nss*10) */
+                res += (nss << 1);
+                /* fall through for actual index */
+            case AR600P_HW_RATECODE_PREAM_HT:
+            res += (rc + (nss << 3));
+                break;
+
+            case AR600P_HW_RATECODE_PREAM_CCK:
+                rc &= ~HW_RATECODE_CCK_SHORT_PREAM_MASK;
+                /* fall through for actual index */
+            case AR600P_HW_RATECODE_PREAM_OFDM:
+                res += rc;
+                break;
+    }
+
+    return res;
+}
+
+/* NOTE: Some thought went into rate selection via MODE. In Fusion the code does the following;
+ *    -if 40MHz rates are valid then MCS 20MHz and OFDM are invalid.
+ *  -if any (20/40) MCS rates are valid then OFDM is invalid.
+ *  -CCK rates are always valid in 2.4 GHz.
+ *
+ * For ar6003/ar600P we adopted a slightly different behavior as follows;
+ *    - if MCS 40Mhz is valid then MCS 20MHz is also valid.
+ *  - because 20MHz rates are valid MCS 0@40mhz and MCS 1@40mhz will never be valid
+ *        as there are MCS 20MHz rates with better throughput and sensitivity then
+ *        these 40Mhz rates.
+ *    - OFDM rates are invalid if any MCS rates are valid.
+ *  - MCS 40MHz rates are always invalid in the 2.4 GHz band.
+ *  - When 40MHz rates are valid only some of the MCS 20MHz rates are also valid.
+ *        MCS 4-7 @ 20MHz are invalid when 40MHz MCS is valid as there are 40MHz rates
+ *        with better throughput and sensitivity.
+ */
+
+/* No 2.4GHz VHT support */
+#define CCK_MODE_VALID_MASK ((1<<MODE_11G) | (1<<MODE_11B) | \
+        (1<<MODE_11NG_HT20) | (1<<MODE_11NG_HT40))
+// at this time OFDM rates are invalid when operating in any HT mode.
+#define OFDM_MODE_VALID_MASK ((1<<MODE_11A) | (1<<MODE_11G) | \
+        (1<<MODE_11GONLY) | (1<<MODE_11NA_HT20) | (1<<MODE_11NG_HT20) \
+        | (1<<MODE_11NA_HT40) | (1<<MODE_11NG_HT40) \
+        | (1<<MODE_11AC_VHT40) | (1<<MODE_11AC_VHT20) | (1<<MODE_11AC_VHT80))
+
+#define HT20_MODE_VALID_MASK ((1<<MODE_11NA_HT20) | (1<<MODE_11NG_HT20) \
+        | (1<<MODE_11NA_HT40) | (1<<MODE_11NG_HT40) \
+        | (1<<MODE_11AC_VHT40) | (1<<MODE_11AC_VHT20) | (1<<MODE_11AC_VHT80))
+
+// at this time 40MHz rates are only valid in the 5GHz band.
+#define HT40_MODE_VALID_MASK ((1<<MODE_11NA_HT40) | (1<<MODE_11NG_HT40) \
+        | (1<<MODE_11AC_VHT40) |(1<<MODE_11AC_VHT80))
+
+// 5GHz VHT rates
+#define VHT20_MODE_VALID_MASK ((1 << MODE_11AC_VHT20) |     \
+            (1<<MODE_11AC_VHT40) | (1<<MODE_11AC_VHT80))
+
+#define VHT40_MODE_VALID_MASK ((1 << MODE_11AC_VHT40) | (1<<MODE_11AC_VHT80))
+
+#define VHT80_MODE_VALID_MASK (1 << MODE_11AC_VHT80)
+//#define VHT160_MODE_VALID_MASK (1 << MODE_11AC_VHT160)
+
+// Certain MCSs are not valid in VHT mode
+#define VHT_INVALID_MCS    (0xFF)
+#define VHT_INVALID_BCC_RATE  0
+
+
+/* For ar600P we have advanced 11n capabilities and they are enabled based on the MCS rate.
+ * Enable LDPC by default for all MCS rates.
+ * Enable STBC for one spatial stream rates.
+ * Enable TXBF for (0-15) MCS rates.
+ */
+#define RT_1SS_PROP    (RATE_PROP_1NSS | RATE_PROP_LDPC | RATE_PROP_STBC | RATE_PROP_TXBF)
+#define RT_2SS_PROP    (RATE_PROP_2NSS | RATE_PROP_LDPC | RATE_PROP_TXBF)
+#define RT_3SS_PROP    (RATE_PROP_3NSS | RATE_PROP_LDPC | RATE_PROP_TXBF)
+#define RT_PROP_DIS    (0)
+
+/*
+VHT properties NSTS, LDPC, STBC TxBF follow same as HT for peregrine
+*/
+
+#define RT_PROP_VHT_1NSS (RT_1SS_PROP)
+#define RT_PROP_VHT_2NSS (RT_2SS_PROP)
+#define RT_PROP_VHT_3NSS (RT_3SS_PROP)
+#define RT_PROP_VHT_4NSS (RT_PROP_DIS)
+
+
+static const WHAL_RATE_TABLE ar600P_11abgnRateTable = {
+
+    RATE_TABLE_SIZE,  /* number of rates - should match the no. of rows below */
+    AR600PRcToIndex,
+    AR600PGetModulation,
+     /*                                                                                                                                       */
+    {/*                                                                                        SGI                 short   dot11 ctrl RssiAck  RssiAck  4ms tx  Bits/   Max    Next */
+     /*                                                                                Kbps    Kbps   uKbps   RC   Preamb  Rate  Rate ValidMin DeltaMin  limit  Symbol  PER    LowerIndex */
+     /* 0   11 Mb */ { CCK_MODE_VALID_MASK, WHAL_MOD_IEEE80211_T_CCK,   RT_PROP_DIS,  11000,  11000,  8100,  0x40,  0x04,   22,   3,    3, 2,        0,     1,    100,    1},
+     /* 1  5.5 Mb */ { CCK_MODE_VALID_MASK, WHAL_MOD_IEEE80211_T_CCK,   RT_PROP_DIS,   5500,   5500,  4900,  0x41,  0x04,   11,   2,    2, 2,        0,     1,    100,    2},
+     /* 2    2 Mb */ { CCK_MODE_VALID_MASK, WHAL_MOD_IEEE80211_T_CCK,   RT_PROP_DIS,   2000,   2000,  1900,  0x42,  0x04,    4,   1,    1, 1,        0,     1,    100,    3},
+     /* 3    1 Mb */ { CCK_MODE_VALID_MASK, WHAL_MOD_IEEE80211_T_CCK,   RT_PROP_DIS,   1000,   1000,   900,  0x43,  0x00,    2,   0,    0, 1,        0,     1,    100,   RT_INVALID_INDEX},
+     /* 4   48 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,  48000,  48000, 27400,  0x00,  0x00,   96,   8,   20, 3,        0,    192,   100,   9},
+     /* 5   24 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,  24000,  24000, 17700,  0x01,  0x00,   48,   8,   10, 3,        0,     96,   100,   10},
+     /* 6   12 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,  12000,  12000, 10100,  0x02,  0x00,   24,   6,    4, 1,        0,     48,   100,    11},
+     /* 7    6 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,   6000,   6000,  5400,  0x03,  0x00,   12,   4,    2, 1,        0,     24,   100,   RT_INVALID_INDEX},
+     /* 8   54 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,  54000,  54000, 30900,  0x04,  0x00,  108,   8,   23, 3,        0,    216,   100,   4},
+     /* 9   36 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,  36000,  36000, 23700,  0x05,  0x00,   72,   8,   14, 3,        0,    144,   100,   5},
+     /* 10   18 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,  18000,  18000, 14100,  0x06,  0x00,   36,   6,   6, 2,        0,     72,   100,   6},
+     /* 11    9 Mb */ { OFDM_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_OFDM,  RT_PROP_DIS,   9000,   9000,  7800,  0x07,  0x00,   18,   4,   3, 1,        0,     36,   100,   7},
+
+/* 11n HT rates */
+
+     /*12  6.5 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,   6500,   7200,  6400,  0x80,  0x00,    0,   4,    2, 3,     3216,     26,   100,    RT_INVALID_INDEX},
+     /*13   13 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  13000,  14400, 12700,  0x81,  0x00,    1,   6,    4, 3,     6434,     52,   100,   12},
+     /*14 19.5 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  19500,  21700, 18800,  0x82,  0x00,    2,   6,    6, 3,     9650,     78,   100,   13},
+     /*15   26 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  26000,  28900, 25000,  0x83,  0x00,    3,   8,   10, 3,    12868,    104,   100,   14},
+     /*16   39 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  39000,  43300, 36700,  0x84,  0x00,    4,   8,   14, 3,    19304,    156,   100,   15},
+     /*17   52 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  52000,  57800, 48100,  0x85,  0x00,    5,   8,   20, 3,    25740,    208,   100,   16},
+     /*18 58.5 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  58500,  65000, 53500,  0x86,  0x00,    6,   8,   23, 3,    28956,    234,   100,   17},
+     /*19   65 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_1SS_PROP,  65000,  72200, 59000,  0x87,  0x00,    7,   8,   25, 3,    32180,    260,   100,   18},
+#if (NUM_SPATIAL_STREAM > 1)
+     /*20   13 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP,  13000,  14400, 12700,  0x90,  0x00,    8,   4,    2, 3,     6430,     52,   100,   13},
+     /*21   26 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP,  26000,  28900, 24800,  0x91,  0x00,    9,   6,    4, 3,    12860,    104,   100,   15},
+     /*22   39 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP,  39000,  43300, 36600,  0x92,  0x00,   10,   6,    6, 3,    19300,    156,   100,   16},
+     /*23   52 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP,  52000,  57800, 48100,  0x93,  0x00,   11,   8,   10, 3,    25736,    208,   100,   17},
+     /*24   78 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP,  78000,  86700, 70410,  0x94,  0x00,   12,   8,   14, 3,    38600,    312,   100,   19},
+     /*25  104 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP, 104000, 115600, 94000,  0x95,  0x00,   13,   8,   20, 3,    51472,    416,   100,   24},
+     /*26  117 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP, 117000, 130000, 105700,  0x96,  0x00,   14,   8,   23, 3,    57890,    468,   100,   25},
+     /*27  130 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_2SS_PROP, 130000, 144000, 117520,  0x97,  0x00,   15,   8,   25, 3,    64320,    520,   100,   26},
+#endif
+
+#if (NUM_SPATIAL_STREAM > 2)
+     /*28   19.5 Mb*/{ HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP, 19500,  21700,  19000,  0xa0,  0x00,   0,   4,    2 , 3,     9652,     78,   100,   13},
+     /*29   39 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP,  39000,  43300,  36700,  0xa1,  0x00,   1,   6,    4,  3,    19304,    156,   100,   15},
+     /*30   58.5 Mb*/{ HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP,  58500,  65000,  53500,  0xa2,  0x00,   2,   6,    6,  3,    28956,    234,   100,   17},
+     /*31   78 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP,  78000,  86700,  70000,  0xa3,  0x00,   3,   8,   10,  3,    38608,    312,   100,   19},
+     /*32   117 Mb */{ HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP, 117000, 130000, 105600,  0xa4,  0x00,   4,   8,   14,  3,    57916,    468,   100,   25},
+     /*33  156 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP, 156000, 173300, 140220,  0xa5,  0x00,   5,   8,   20,  3,    65532,    624,   100,   27},
+     /*34  175.5 Mb*/{ HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP, 175500, 195000, 156580,  0xa6,  0x00,   6,   8,   23,  3,    65532,    702,   100,   33},
+     /*35  195 Mb */ { HT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_20, RT_3SS_PROP, 195000, 216700, 172800,  0xa7,  0x00,   7,   8,   25,  3,    65532,    780,   100,   34},
+#endif
+
+     /*36 13.5 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP,  13500,  15000, 13200,  0x80,  0x00,    0,   4,    2,  3,     6684,     54,   100,   RT_INVALID_INDEX},
+     /*37 27.0 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP,  27000,  30000, 25900,  0x81,  0x00,    1,   6,    4,  3,    13368,    108,   100,   HT_40_RATE_TABLE_INDEX},
+     /*38 40.5 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP,  40500,  45000, 38600,  0x82,  0x00,    2,   6,    6,  3,    20052,    162,   100,   HT_40_RATE_TABLE_INDEX + 1},
+     /*39   54 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP,  54000,  60000, 49000,  0x83,  0x00,    3,   8,   10,  3,    26738,    216,   100,   HT_40_RATE_TABLE_INDEX + 2},
+     /*40   81 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP,  81500,  90000, 73380,  0x84,  0x00,    4,   8,   14,  3,    40104,    324,   100,   HT_40_RATE_TABLE_INDEX + 3},
+     /*41  108 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP, 108000, 120000, 97800,  0x85,  0x00,    5,   8,   20,  3,    53476,    432,   100,   HT_40_RATE_TABLE_INDEX + 4},
+     /*42 121.5Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP, 121500, 135000,110060,  0x86,  0x00,    6,   8,   23,  3,    60156,    486,   100,   HT_40_RATE_TABLE_INDEX + 5},
+     /*43  135 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_1SS_PROP, 135000, 150000,122200,  0x87,  0x00,    7,   8,   25,  3,    66840,    540,   100,   HT_40_RATE_TABLE_INDEX + 6},
+
+#if (NUM_SPATIAL_STREAM > 1)
+     /*44   27 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP,  27000,  30000, 25800,  0x90,  0x00,    8,   4,    2,  3,    13360,    108,   100,   HT_40_RATE_TABLE_INDEX},
+     /*45   54 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP,  54000,  60000, 49800,  0x91,  0x00,    9,   6,    4,  3,    26720,    216,   100,   HT_40_RATE_TABLE_INDEX + 2},
+     /*46   81 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP,  81000,  90000, 73000,  0x92,  0x00,   10,   6,    6,  3,    40080,    324,   100,   HT_40_RATE_TABLE_INDEX + 3},
+     /*47  108 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP, 108000, 120000, 97000,  0x93,  0x00,   11,   8,   10,  3,    53440,    432,   100,   HT_40_RATE_TABLE_INDEX + 4},
+     /*48  162 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP, 162000, 180000, 145510,  0x94,  0x00,   12,   8,   14,  3,    80160,    648,   100,   HT_40_RATE_TABLE_INDEX + 7},
+     /*49  216 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP, 216000, 240000, 190370,  0x95,  0x00,   13,   8,   20,  3,   106880,    864,   100,   HT_40_RATE_TABLE_INDEX + 12},
+     /*50  243 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP, 243000, 270000, 211940,  0x96,  0x00,   14,   8,   23,  3,   120240,    972,   100,   HT_40_RATE_TABLE_INDEX + 13},
+     /*51  270 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_2SS_PROP, 270000, 300000, 233150,  0x97,  0x00,   15,   8,   25,  3,   133600,   1080,   100,   HT_40_RATE_TABLE_INDEX + 14},
+#endif
+
+#if (NUM_SPATIAL_STREAM > 2)
+
+     /*52  40.5 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 40500,  45000,  38000,  0xa0,  0x00,   0,   4,    2,  3,   20048,    162,   100,   HT_40_RATE_TABLE_INDEX + 1},
+     /*53   54 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP,  81000,  90000,  72000,  0xa1,  0x00,   1,   6,    4,  3,   40096,    324,   100,   HT_40_RATE_TABLE_INDEX + 3},
+     /*54   81 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 121500, 135000, 108000,  0xa2,  0x00,   2,   6,    6,  3,   60140,    486,   100,   HT_40_RATE_TABLE_INDEX + 5},
+     /*55  108 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 162000, 180000, 145300,  0xa3,  0x00,   3,   8,   10,  3,   80188,    648,   100,   HT_40_RATE_TABLE_INDEX + 7},
+     /*56  162 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 243000, 270000, 211600,  0xa4,  0x00,   4,   8,   14,  3,  120284,    972,   100,   HT_40_RATE_TABLE_INDEX + 13},
+     /*57  216 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 324000, 360000, 274020,  0xa5,  0x00,   5,   8,   20,  3,  160380,   1296,   100,   HT_40_RATE_TABLE_INDEX + 15},
+     /*58  243 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 364500, 405000, 304420,  0xa6,  0x00,   6,   8,   23,  3,  180428,   1458,   100,   HT_40_RATE_TABLE_INDEX + 21},
+     /*59  270 Mb */ { HT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_HT_40, RT_3SS_PROP, 405000, 450000, 333170,  0xa7,  0x00,   7,   8,   25,  3,  200476,   1620,   100,   HT_40_RATE_TABLE_INDEX + 22},
+#endif
+/*
+                 TODO
+                 Fix all arguments to be consistents with definitions
+*/
+
+/* VHT MCS0-9 NSS 1 20 MHz */
+
+     /*60 6.5 Mb */ {VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,     6500,   7200,  6400,  0xc0,  0x00,    0,   4,    2,  3,     3216,     26,   100,    RT_INVALID_INDEX},
+     /*61   13 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  13000,  14400, 12700,  0xc1,  0x00,    1,   6,    4,  3,     6436,     52,   100,    RT_VHT_RATE_BASE_IDX},
+     /*62 19.5 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  19500,  21700, 18800,  0xc2,  0x00,    2,   6,    6,  3,     9652,     78,   100,    RT_VHT_RATE_BASE_IDX +1 },
+     /*63   26 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  26000,  28900, 25000,  0xc3,  0x00,    3,   8,   10,  3,    12868,    104,   100,    RT_VHT_RATE_BASE_IDX +2},
+     /*64   39 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  39000,  43300, 36700,  0xc4,  0x00,    4,   8,   14,  3,    19304,    156,   100,    RT_VHT_RATE_BASE_IDX +3},
+     /*65   52 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  52000,  57800, 48100,  0xc5,  0x00,    5,   8,   20,  3,    25740,    208,   100,   RT_VHT_RATE_BASE_IDX +4},
+     /*66 58.5 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  58500,  65000, 53500,  0xc6,  0x00,    6,   8,   23,  3,    28956,    234,   100,   RT_VHT_RATE_BASE_IDX +5},
+     /*67   65 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  65000,  72200, 59000,  0xc7,  0x00,    7,   8,   25,  3,    32176,    260,   100,   RT_VHT_RATE_BASE_IDX +6},
+     /*68   78 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  78000,  86700, 70500,  0xc8,  0x00,    8,   8,   25,  3,    38608,    312,   100,   RT_VHT_RATE_BASE_IDX +7},
+     /*69   MCS9 */  { VHT_INVALID_BCC_RATE,  WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_1NSS,  86500,  96000, 78000,  0xc9,  0x00,    9,   8,   25,  3,    42816,    346,   100,
+RT_VHT_RATE_BASE_IDX +8},
+
+/* VHT MCS0-9 NSS 2 20 MHz */
+#if (NUM_SPATIAL_STREAM > 1)
+
+      /*70  13 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS,  13000,  14400,  12700,  0xd0,  0x00,    0,   4,    2, 3,     6436,     52,   100,    RT_VHT_RATE_BASE_IDX +1},
+      /*71  26 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS,  26000,  28900,  25000,  0xd1,  0x00,    1,   6,    4, 3,    12868,    104,   100,    RT_VHT_RATE_BASE_IDX +2},
+      /*72  39 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS,  39000,  43300,  36700,  0xd2,  0x00,    2,   6,    6, 3,    19304,    156,   100,    RT_VHT_RATE_BASE_IDX +3},
+      /*73  52 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS,  52000,  57800,  48000,  0xd3,  0x00,    3,   8,   10, 3,    25740,    208,   100,    RT_VHT_RATE_BASE_IDX +4},
+      /*74  78 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS,  78000,  86700,  70400,  0xd4,  0x00,    4,   8,   14, 3,    38608,    312,   100,    RT_VHT_RATE_BASE_IDX +7},
+      /*75  104 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20,RT_PROP_VHT_2NSS, 104000, 115600,  94000,  0xd5,  0x00,    5,   8,   20, 3,    51480,    416,   100,   RT_VHT_RATE_BASE_IDX +8},
+      /*76  117 Mb */ {VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS, 117000, 130000, 105600,  0xd6,  0x00,    6,   8,   23, 3,    57916,    468,   100,   RT_VHT_RATE_BASE_IDX +15},
+      /*77  130 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20,RT_PROP_VHT_2NSS, 130000, 144400, 117330,  0xd7,  0x00,    7,   8,   25, 3,    64348,    520,   100,   RT_VHT_RATE_BASE_IDX +16},
+      /*78  156Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS, 156000, 173300, 140800,  0xd8,  0x00,    8,   8,   25, 3,    77220,    624,   100,   RT_VHT_RATE_BASE_IDX +17},
+      /*79   MCS9 */ { VHT_INVALID_BCC_RATE, WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_2NSS, 173000, 192000, 150000,  0xd9,  0x00,    9,   8,   25, 3,    85636,    693,   100,
+RT_VHT_RATE_BASE_IDX +18},
+#endif
+ /* VHT MCS0-9 NSS 3 20 MHz */
+
+#if (NUM_SPATIAL_STREAM > 2)
+
+      /*80  19.5 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,   19500,   21700,  19000,  0xe0,  0x00,  0,  4,   2, 3,    9652,    78,   100,    RT_VHT_RATE_BASE_IDX +1},
+      /*81   39 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,    39000,   43300,  36700,  0xe1,  0x00,  1,  6,   4, 3,   19304,   156,   100,    RT_VHT_RATE_BASE_IDX +3},
+      /*82 58.5 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,    58500,   65000,  53500,  0xe2,  0x00,  2,  6,   6, 3,   28956,   234,   100,    RT_VHT_RATE_BASE_IDX +5},
+      /*83   78 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,    78000,   86700,  70000,  0xe3,  0x00,  3,  8,  10, 3,   38608,   312,   100,    RT_VHT_RATE_BASE_IDX +7},
+      /*84   117 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,  117000,  130000, 105000,  0xe4,  0x00,  4,  8,  14, 3,   57916,   468,   100,    RT_VHT_RATE_BASE_IDX +15},
+      /*85   156 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,  156000,  173300, 140520,  0xe5,  0x00,  5,  8,  20, 3,   77220,   624,   100,   RT_VHT_RATE_BASE_IDX +17},
+      /*86 175.5 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,  175500,  195000, 157720,  0xe6,  0x00,  6,  8,  23, 3,   86872,   702,   100,   RT_VHT_RATE_BASE_IDX +25},
+      /*87   195 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,  195000,  216700, 175650,  0xe7,  0x00,  7,  8,  25, 3,   96524,   780,   100,   RT_VHT_RATE_BASE_IDX +26},
+      /*88   234 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,  234000,  260000, 210780,  0xe8,  0x00,  8,  8,  25, 3,  115828,   936,   100,   RT_VHT_RATE_BASE_IDX +27},
+      /*89  260 */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_3NSS,      260000,  288900, 234200,  0xe9,  0x00,  9,  8,  25, 3,  128700,  1040,   100,   RT_VHT_RATE_BASE_IDX +28},
+
+#endif
+ /* VHT MCS0-9 NSS 4 20 MHz */
+
+#ifdef one_day_these_rates_will_be_on_air
+
+      /*90  26 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,   26000,   28900,  25000,  0xf0,  0x00,    0,   4,    2,       3,     12868,     104,   100,    RT_VHT_RATE_BASE_IDX +2},
+      /*91   52 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  52000,  57800, 48000,  0xf1,  0x00,    1,   6,    4,       3,     25740,     208,   100,    RT_VHT_RATE_BASE_IDX +4},
+      /*92 78 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  78000,  86700, 70000,  0xf2,  0x00,    2,   6,    6,       3,     38608,     312,   100,    RT_VHT_RATE_BASE_IDX +7},
+      /*93   104 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  104000,  115600, 90000,  0xf3,  0x00,    3,   8,   10,       3,    51480,    416,   100,    RT_VHT_RATE_BASE_IDX +8},
+      /*94   156 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  156000,  173300, 128000,  0xf4,  0x00,    4,   8,   14,       3,    77220,    624,   100,    RT_VHT_RATE_BASE_IDX +17},
+      /*95   208 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  208000,  231100, 160000,  0xf5,  0x00,    5,   8,   20,       3,    102960,    832,   100,   RT_VHT_RATE_BASE_IDX +27},
+      /*96 234Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  234000,  260000, 174000,  0xf6,  0x00,    6,   8,   23,       3,    115828,    936,   100,   RT_VHT_RATE_BASE_IDX +35},
+      /*97   260 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  260000,  288900, 190000,  0xf7,  0x00,    7,   8,   25,       3,    128700,    1040,   100,   RT_VHT_RATE_BASE_IDX +36},
+      /*98   312 Mb */ { VHT20_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  312000,  346700, 215000,  0xf8,  0x00,    8,   8,   25,       3,    154440,    1248,   100,   RT_VHT_RATE_BASE_IDX +37},
+      /*99   MCS9 */ { VHT_INVALID_BCC_RATE,WHAL_MOD_IEEE80211_T_VHT_20, RT_PROP_VHT_4NSS,  0,  0, 0},
+
+#endif
+ /* VHT MCS0-9 NSS 1 40 MHz */
+
+
+     /*90   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,    13500,   15000,  13000,  0xc0, 0, 0, 4,  2,  3,  6680,   54,   100,    RT_INVALID_INDEX},
+      /*91  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,    27000,   30000,  26000,  0xc1, 0, 1, 6,  4,  3, 13364,  108,   100,    VHT_40_RATE_TABLE_INDEX + 0},
+      /*92  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,    40500,   45000,  38000,  0xc2, 0, 2, 6,  6,  3, 20048,  162,   100,    VHT_40_RATE_TABLE_INDEX + 1},
+      /*93  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,    54000,   60000,  50000,  0xc3, 0, 3, 8, 10,  3, 26728,  216,   100,    VHT_40_RATE_TABLE_INDEX + 2},
+      /*94  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,    81000,   90000,  73200,  0xc4, 0, 4, 8, 14,  3, 40096,  324,   100,    VHT_40_RATE_TABLE_INDEX + 3},
+      /*95  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,   108000,  120000,  97360,  0xc5, 0, 5, 8, 20,  3, 53460,  432,   100,   VHT_40_RATE_TABLE_INDEX + 4},
+      /*96   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,  121500,  135000, 109000,  0xc6, 0, 6, 8, 23,  3, 60140,  486,   100,   VHT_40_RATE_TABLE_INDEX + 5},
+      /*97  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,   135000,  150000, 122000,  0xc7, 0, 7, 8, 25,  3, 66824,  540,   100,   VHT_40_RATE_TABLE_INDEX + 6},
+      /*98  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,   162000,  180000, 146040,  0xc8, 0, 8, 8, 25,  3, 80188,  648,   100,   VHT_40_RATE_TABLE_INDEX + 7},
+     /*99 9 */ { VHT40_MODE_VALID_MASK, WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_1NSS,  180000,  200000, 162650,  0xc9, 0, 9, 8, 25,  3, 89100,  720,   100, VHT_40_RATE_TABLE_INDEX + 8},
+
+ /* VHT MCS0-9 NSS 2 40 MHz */
+
+#if (NUM_SPATIAL_STREAM > 1)
+
+     /*100 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS,  27000,  30000,  26000,  0xd0, 0,  0,  4,   2,  3,   13364,   108, 100,    VHT_40_RATE_TABLE_INDEX + 0},
+     /*101 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS,  54000,  60000,  50000,  0xd1, 0,  1,  6,   4,  3,   26728,   216, 100,    VHT_40_RATE_TABLE_INDEX + 2},
+     /*102 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS,  81000,  90000,  73000,  0xd2, 0,  2,  6,   6,  3,   40096,   324, 100,    VHT_40_RATE_TABLE_INDEX + 3},
+     /*103 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 108000, 120000,  97260,  0xd3, 0,  3,  8,  10,  3,   53460,   432, 100,    VHT_40_RATE_TABLE_INDEX + 4},
+     /*104 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 162000, 180000, 145890,  0xd4, 0,  4,  8,  14,  3,   80188,   648, 100,   VHT_40_RATE_TABLE_INDEX + 7},
+     /*105 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 216000, 240000, 195000,  0xd5, 0,  5,  8,  20,  3,  106920,   864, 100,   VHT_40_RATE_TABLE_INDEX + 9},
+     /*106 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 243000, 270000, 219440,  0xd6, 0,  6,  8,  23,  3,  120284,   972, 100,   VHT_40_RATE_TABLE_INDEX + 15},
+     /*107 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 270000, 300000, 243730,  0xd7, 0,  7,  8,  25,  3,  133648,  1080, 100,   VHT_40_RATE_TABLE_INDEX + 16},
+     /*108 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 324000, 360000, 292460,  0xd8, 0,  8,  8,  25,  3,  160380,  1296, 100,   VHT_40_RATE_TABLE_INDEX + 17},
+     /*109 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_2NSS, 360000, 400000, 324980,  0xd9, 0,  9,  8  ,25,  3,  178200,  1440, 100, VHT_40_RATE_TABLE_INDEX + 18},
+
+#endif
+ /* VHT MCS0-9 NSS 3 40 MHz */
+
+#if (NUM_SPATIAL_STREAM > 2)
+
+      /*110  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,   40500,   45000,  38000,  0xe0,  0,  0,  4,   2,   3,    20048,     162,   100,    VHT_40_RATE_TABLE_INDEX + 1},
+      /*111  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,   81000,   90000,  72000,  0xe1,  0,  1,  6,   4,   3,    40096,     324,   100,    VHT_40_RATE_TABLE_INDEX + 3},
+      /*112  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  121500,  135000, 108860,  0xe2,  0,  2,  6,   6,   3,    60140,     486,   100,    VHT_40_RATE_TABLE_INDEX + 5},
+      /*113  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  162000,  180000, 145590,  0xe3,  0,  3,  8,  10,   3,    80188,     648,   100,    VHT_40_RATE_TABLE_INDEX + 7},
+      /*114  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  243000,  270000, 219010,  0xe4,  0,  4,  8,  14,   3,   120284,     972,   100,    VHT_40_RATE_TABLE_INDEX + 9},
+      /*115  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  324000,  360000, 291880,  0xe5,  0,  5,  8,  20,   3,   160380,    1296,   100,   VHT_40_RATE_TABLE_INDEX + 17},
+      /*116  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  364500,  405000, 328210,  0xe6,  0,  6,  8,  23,   3,   180428,    1458,   100,   VHT_40_RATE_TABLE_INDEX + 19},
+      /*117  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  405000,  450000, 365280,  0xe7,  0,  7,  8,  25,   3,   200476,    1620,   100,   VHT_40_RATE_TABLE_INDEX + 26},
+      /*118  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  486000,  540000, 433830,  0xe8,  0,  8,  8,  25,   3,   240568,    1944,   100,   VHT_40_RATE_TABLE_INDEX + 27},
+      /*119  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_3NSS,  540000,  600000, 479050,  0xe9,  0,  9,  8,  25,   3,   267300,    2160,   100,   VHT_40_RATE_TABLE_INDEX + 28},
+
+#endif
+
+ /* VHT MCS0-9 NSS 4 40 MHz */
+#ifdef one_day_these_rates_will_be_on_air
+
+      /*120  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,   54000,   60000,  50000,  0xf0,  0x00,    0,   4,    2,       3,     26728,     216,   100,    VHT_40_RATE_TABLE_INDEX + 2},
+      /*121   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  108000,  120000, 93000,  0xf1,  0x00,    1,   6,    4,       3,     53460,     432,   100,    VHT_40_RATE_TABLE_INDEX + 4},
+      /*122  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  162000,  180000, 132000,  0xf2,  0x00,    2,   6,    6,       3,     80188,     648,   100,    VHT_40_RATE_TABLE_INDEX + 7},
+      /*123   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  216000,  240000, 163000,  0xf3,  0x00,    3,   8,   10,       3,    106920,    864,   100,    VHT_40_RATE_TABLE_INDEX + 9},
+      /*124   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  324000,  360000, 220000,  0xf4,  0x00,    4,   8,   14,       3,    160380,    1296,   100,   VHT_40_RATE_TABLE_INDEX + 17},
+      /*125   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  432000,  480000, 263000,  0xf5,  0x00,    5,   8,   20,       3,    213840,    1728,   100,   VHT_40_RATE_TABLE_INDEX + 27},
+      /*126  */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  486000,  540000, 290000,  0xf6,  0x00,    6,   8,   23,       3,    240568,    1944,   100,   VHT_40_RATE_TABLE_INDEX + 35},
+      /*127   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  540000,  600000, 301000,  0xf7,  0x00,    7,   8,   25,       3,    267300,    2160,   100,   VHT_40_RATE_TABLE_INDEX + 36},
+      /*128   */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  648000,  720000, 339000,  0xf8,  0x00,    8,   8,   25,       3,    320760,    2592,   100,   VHT_40_RATE_TABLE_INDEX + 37},
+      /*129   MCS9 */ { VHT40_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_40, RT_PROP_VHT_4NSS,  720000,  800000, 353000, 0xf9,  0x00,    9,   8,   25,   3,    356400,    2880,   100,   VHT_40_RATE_TABLE_INDEX + 38},
+
+#endif
+
+ /* VHT MCS0-9 NSS 1 80 MHz */
+
+      /*120 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS,  29300,   32500,   28000,  0xc0,  0x00,   0,   4,    2,   3,   14476,     117,   100,    RT_INVALID_INDEX},
+      /*121 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS,  58500,   65000,   54000,  0xc1,  0x00,   1,   6,    4,   3,   28956,     234,   100,    VHT_80_RATE_TABLE_INDEX + 0},
+      /*122 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS,  87800,   97500,   79000,  0xc2,  0x00,   2,   6,    6,   3,   43436,     351,   100,    VHT_80_RATE_TABLE_INDEX + 1},
+      /*123 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS, 117000,  130000,  105710,  0xc3,  0x00,   3,   8,   10,   3,   57916,     468,   100,    VHT_80_RATE_TABLE_INDEX + 2},
+      /*124 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS, 175500,  195000,  158210,  0xc4,  0x00,   4,   8,   14,   3,   86872,     702,   100,    VHT_80_RATE_TABLE_INDEX + 3},
+      /*125 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS, 234000,  260000,  211410,  0xc5,  0x00,   5,   8,   20,   3,  115828,     936,   100,   VHT_80_RATE_TABLE_INDEX + 4},
+      /*126 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS, 263300,  292500,  237750,  0xc6,  0x00,   6,   8,   23,   3,  130308,    1053,   100,   VHT_80_RATE_TABLE_INDEX + 5},
+      /*127 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS, 292500,  325000,  264600,  0xc7,  0x00,   7,   8,   25,   3,  144788,    1170,   100,   VHT_80_RATE_TABLE_INDEX + 6},
+      /*128 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS, 351000,  390000,  317120,  0xc8,  0x00,   8,   8,   25,   3,  173744,    1404,   100,   VHT_80_RATE_TABLE_INDEX + 7},
+      /*129 */ {VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_1NSS,  390000,  433300,  352360,  0xc9,  0x00,   9,   8,   25,   3,  193048,    1560,   100,   VHT_80_RATE_TABLE_INDEX + 8},
+
+ /* VHT MCS0-9 NSS 2 80 MHz */
+#if (NUM_SPATIAL_STREAM > 1)
+
+      /*130 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,   58500,   65000,  53500,  0xd0,  0x00,    0,   4,    2,   3,     28956,     234,   100,    VHT_80_RATE_TABLE_INDEX + 0},
+      /*131 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  117000,  130000, 105290,  0xd1,  0x00,    1,   6,    4,   3,     57916,     468,   100,   VHT_80_RATE_TABLE_INDEX + 2},
+      /*132 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  175500,  195000, 157560,  0xd2,  0x00,    2,   6,    6,   3,     86872,     702,   100,    VHT_80_RATE_TABLE_INDEX + 3},
+      /*133 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  234000,  260000, 211200,  0xd3,  0x00,    3,   8,   10,   3,    115828,     936,   100,    VHT_80_RATE_TABLE_INDEX + 4},
+      /*134 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  351000,  390000, 317470,  0xd4,  0x00,    4,   8,   14,   3,    173744,    1404,   100,   VHT_80_RATE_TABLE_INDEX + 7},
+      /*135 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  468000,  520000, 419810,  0xd5,  0x00,    5,   8,   20,   3,    231660,    1872,   100,   VHT_80_RATE_TABLE_INDEX + 9},
+      /*136 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  526500,  585000, 468920,  0xd6,  0x00,    6,   8,   23,   3,    260616,    2106,   100,   VHT_80_RATE_TABLE_INDEX + 15},
+      /*137 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  585000,  650000, 517180,  0xd7,  0x00,    7,   8,   25,   3,    289576,    2340,   100,   VHT_80_RATE_TABLE_INDEX + 16},
+      /*138 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  702000,  780000, 612110,  0xd8,  0x00,    8,   8,   25,   3,    347488,    2808,   100,   VHT_80_RATE_TABLE_INDEX + 17},
+      /*139 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_2NSS,  780000,  866700, 673370,  0xd9,  0x00,    9,   8,   25,   3,    386100,    3120,   100,   VHT_80_RATE_TABLE_INDEX + 18},
+
+#endif
+ /* VHT MCS0-9 NSS 3 80 MHz */
+#if (NUM_SPATIAL_STREAM > 2)
+
+      /*140 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,    87800,    97500,   77000,  0xe0,  0x00,    0,   4,    2,  3,    43436,     351,   100,    VHT_80_RATE_TABLE_INDEX + 1},
+      /*141 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,   175500,   195000,  157240,  0xe1,  0x00,    1,   6,    4,  3,    86872,     702,   100,    VHT_80_RATE_TABLE_INDEX + 3},
+      /*142 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,   263300,   292500,  236320,  0xe2,  0x00,    2,   6,    6,  3,   130308,    1053,   100,    VHT_80_RATE_TABLE_INDEX + 5},
+      /*143 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,   351000,   390000,  316170,  0xe3,  0x00,    3,   8,   10,  3,   173744,    1404,   100,    VHT_80_RATE_TABLE_INDEX + 7},
+      /*144 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,   526500,   585000,  467750,  0xe4,  0x00,    4,   8,   14,  3,   260616,    2106,   100,    VHT_80_RATE_TABLE_INDEX + 15},
+      /*145 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,   702000,   780000,  610130,  0xe5,  0x00,    5,   8,   20,  3,   390924,    2808,   100,   VHT_80_RATE_TABLE_INDEX + 17},
+      /*146 */ { VHT_INVALID_BCC_RATE,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,  0,  0, 0,  0xe6,  0x00,    6,   0,   0,       0,    0,    0,   0,  0},
+      /*147 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,   877500,   975000,  746760,  0xe7,  0x00,    7,   8,   25,  3,   434360,    3510,   100,   VHT_80_RATE_TABLE_INDEX + 19},
+      /*148 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,  1053000,  1170000,  877120,  0xe8,  0x00,    8,   8,   25,  3,   521236,    4212,   100,   VHT_80_RATE_TABLE_INDEX + 27},
+      /*149 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_3NSS,  1170000,  1300000,  962230,  0xe9,  0x00,    9,   8,   25,  3,   579148,    4680,   100,   VHT_80_RATE_TABLE_INDEX + 28},
+
+#endif
+ /* VHT MCS0-9 NSS 4 80 MHz */
+#ifdef one_day_these_rates_will_be_on_air
+
+      /*150  */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,   117000,   130000,  100000,  0xf0,  0x00,    0,   4,    2,       3,     57916,     468,   100,    VHT_80_RATE_TABLE_INDEX + 2},
+      /*151   */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  234000,  260000, 174000,  0xf1,  0x00,    1,   6,    4,       3,     115828,     936,   100,    VHT_80_RATE_TABLE_INDEX + 4},
+      /*152 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  351000,  390000, 233000,  0xf2,  0x00,    2,   6,    6,       3,     173744,     1404,   100,    VHT_80_RATE_TABLE_INDEX + 7},
+      /*153   */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  468000,  520000, 281000,  0xf3,  0x00,    3,   8,   10,       3,    231660,    1872,   100,    VHT_80_RATE_TABLE_INDEX + 9},
+      /*154   */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  702000,  780000, 353000,  0xf4,  0x00,    4,   8,   14,       3,    347488,    2808,   100,    VHT_80_RATE_TABLE_INDEX + 17},
+      /*155   */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  936000,  1040000, 406000,  0xf5,  0x00,    5,   8,   20,       3,   463320,    3744,   100,   VHT_80_RATE_TABLE_INDEX + 27},
+      /*156  */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  1053000,  1170000, 426700,  0xf6,  0x00,    6,   8,   23,       3,   521236,    4212,   100,   VHT_80_RATE_TABLE_INDEX + 35},
+      /*157   */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  1170000,  1300000, 426700,  0xf7,  0x00,    7,   8,   25,       3,   579148,    4680,   100,   VHT_80_RATE_TABLE_INDEX + 36},
+      /*158   */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  1404000,  1560000, 476300,  0xf8,  0x00,    8,   8,   25,       3,   694980,    5616,   100,   VHT_80_RATE_TABLE_INDEX + 37},
+      /*159   MCS9 */ { VHT80_MODE_VALID_MASK,WHAL_MOD_IEEE80211_T_VHT_80, RT_PROP_VHT_4NSS,  1560000,  1733300, 476300,  0xf9,  0x00,    9,   8,   25,       3,    772200,    6240,   100,   VHT_80_RATE_TABLE_INDEX + 38},
+#endif
+
+/* Todo Extend support for 80+80/160 MHz in future */
+
+    },
+    50,  /* probe interval */
+    50,  /* rssi reduce interval */
+    /* initial max rate index */
+   /* MODE_11A, MODE_11G, MODE_11B, MODE_11GONLY, MODE_11NA_HT20, MODE_11NG_HT20, MODE_11NA_HT40, MODE_11NG_HT40 */
+    {   5,      5,        0,         5, RT_GET_HT_20M_START_RIX,
+             RT_GET_HT_20M_START_RIX, RT_GET_HT_40M_START_RIX,  RT_GET_HT_40M_START_RIX,
+    /* 11AC 20, 40,80 Mhz */
+    RT_GET_VHT_20M_START_RIX, RT_GET_VHT_40M_START_RIX, RT_GET_VHT_80M_START_RIX}
+};
+
+A_COMPILE_TIME_ASSERT(verifyMAX_MODEandWHAL_RATE_TABLE, (16 == (MODE_MAX)));
+
+void *
+ar6000ChipSpecificPhyAttach()
+{
+    A_UINT16 i;
+//    gpPhyStruct = pPhyStruct;
+
+    for(i=0;i<MODE_MAX ; i++)
+        gpPhyStruct.pHwRateTable[i] = &ar600P_11abgnRateTable;
+
+    return &gpPhyStruct;
+}
+
+int match_rate_to_nss(int htflag, int nss, int idx)
+{
+    int modeMask = ar600P_11abgnRateTable.info[idx].validModeMask;
+    int	propMask = ar600P_11abgnRateTable.info[idx].propMask;
+
+    if (htflag == 1) {
+        if ((modeMask == CCK_MODE_VALID_MASK
+             ||modeMask== OFDM_MODE_VALID_MASK))
+            return 0;
+    } else if (htflag == 2) {
+        if (modeMask == HT20_MODE_VALID_MASK
+            ||modeMask== HT40_MODE_VALID_MASK) {
+            if (nss == 3 && propMask == RT_3SS_PROP)
+                return 0;
+	        else if (nss == 2 && propMask == RT_2SS_PROP)
+                return 0;
+	        else if (nss == 1 && propMask == RT_1SS_PROP)
+               return 0;
+        }
+    } else if (htflag == 3) {
+        if (modeMask == VHT20_MODE_VALID_MASK
+            ||modeMask == VHT40_MODE_VALID_MASK
+             ||modeMask == VHT80_MODE_VALID_MASK) {
+            if (nss == 3 && propMask == RT_3SS_PROP)
+               return 0;
+	       else if (nss == 2 && propMask == RT_2SS_PROP)
+               return 0;
+	       else if (nss == 1 && propMask == RT_1SS_PROP)
+               return 0;
+       }
+    }
+
+    return 1;
+}
+
+int whal_kbps_to_mcs(int kbps_rate, int shortgi, int htflag, int nss_val)
+{
+    int i;
+    int mcs_val1,mcs_val2;
+    mcs_val1=mcs_val2=1;
+
+    if ((htflag < 0 || htflag > 3)
+        || (nss_val < 0 || nss_val > 3))
+        return -1;
+
+    if (shortgi==0) {
+        for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+            if (ar600P_11abgnRateTable.info[i].rateKbps == kbps_rate) {
+                if (!htflag)
+			       break;
+                if (!match_rate_to_nss(htflag, nss_val, i))
+                   break;
+            }
+        }
+        if (i==RATE_TABLE_SIZE)
+            mcs_val1=0;
+		else
+            return ar600P_11abgnRateTable.info[i].dot11Rate;
+    } else {
+        for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+            if (ar600P_11abgnRateTable.info[i].rateKbpsSGI==kbps_rate) {
+                if (!htflag)
+                    break;
+                if (!match_rate_to_nss(htflag, nss_val, i))
+				    break;
+            }
+        }
+        if (i==RATE_TABLE_SIZE)
+            mcs_val2=0;
+        else
+            return ar600P_11abgnRateTable.info[i].dot11Rate;
+    }
+
+    if (!mcs_val1) {
+        for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+            if (ar600P_11abgnRateTable.info[i].rateKbpsSGI == kbps_rate) {
+                if (!htflag)
+                    break;
+                if (!match_rate_to_nss(htflag, nss_val, i))
+                    break;
+            }
+        }
+        if (i== RATE_TABLE_SIZE)
+            return -1;
+        else
+            return ar600P_11abgnRateTable.info[i].dot11Rate;
+    }
+
+    if (!mcs_val2) {
+        for (i=0 ; i<RATE_TABLE_SIZE;i++) {
+            if (ar600P_11abgnRateTable.info[i].rateKbps==kbps_rate) {
+                if (!htflag)
+                    break;
+                if (!match_rate_to_nss(htflag, nss_val, i))
+                    break;
+            }
+        }
+        if (i==RATE_TABLE_SIZE)
+            return -1;
+        else
+            return ar600P_11abgnRateTable.info[i].dot11Rate;
+    }
+    return -1;
+}
+
+int whal_mcs_to_kbps(int preamb, int mcs, int htflag, int gintval)
+{
+    int i;
+    int modeMask,propMask;
+    /*
+     * legacy =1, HT=2, VHT=3
+     */
+
+    switch (htflag) {
+    case 1:
+      if(preamb ==  AR600P_HW_RATECODE_PREAM_OFDM)
+        return ar600P_11abgnRateTable.info[mcs + 4].rateKbps;
+      else
+        return ar600P_11abgnRateTable.info[mcs].rateKbps;
+    case 2:
+        if (!gintval) {
+            for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+                if (ar600P_11abgnRateTable.info[i].dot11Rate == mcs) {
+                    modeMask = ar600P_11abgnRateTable.info[i].validModeMask;
+                    propMask = ar600P_11abgnRateTable.info[i].propMask;
+                    if(modeMask == HT20_MODE_VALID_MASK
+                       ||modeMask == HT40_MODE_VALID_MASK){
+                        return ar600P_11abgnRateTable.info[i].rateKbps;
+                    }
+                }
+            }
+        } else {
+            for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+                if( ar600P_11abgnRateTable.info[i].dot11Rate == mcs ){
+                    modeMask = ar600P_11abgnRateTable.info[i].validModeMask;
+                    propMask = ar600P_11abgnRateTable.info[i].propMask;
+                    if (modeMask == HT20_MODE_VALID_MASK
+                        ||modeMask== HT40_MODE_VALID_MASK) {
+                        return ar600P_11abgnRateTable.info[i].rateKbps;
+                    }
+                }
+            }
+        }
+        break;
+    case 3:
+        if (!gintval) {
+            for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+                if (ar600P_11abgnRateTable.info[i].dot11Rate == mcs) {
+                    modeMask = ar600P_11abgnRateTable.info[i].validModeMask;
+                    propMask = ar600P_11abgnRateTable.info[i].propMask;
+                    if (modeMask == VHT20_MODE_VALID_MASK
+                        ||modeMask == VHT40_MODE_VALID_MASK
+                         ||modeMask == VHT80_MODE_VALID_MASK) {
+                        return ar600P_11abgnRateTable.info[i].rateKbps;
+                    }
+                }
+            }
+        } else {
+            for (i=0 ; i<RATE_TABLE_SIZE; i++) {
+                if (ar600P_11abgnRateTable.info[i].dot11Rate == mcs) {
+                    modeMask = ar600P_11abgnRateTable.info[i].validModeMask;
+                    propMask = ar600P_11abgnRateTable.info[i].propMask;
+                    if (modeMask == VHT20_MODE_VALID_MASK
+                        ||modeMask == VHT40_MODE_VALID_MASK
+                         ||modeMask == VHT80_MODE_VALID_MASK) {
+                        return ar600P_11abgnRateTable.info[i].rateKbpsSGI;
+                    }
+                }
+            }
+        }
+        break;
+    }
+    return 0;
+}
+
+const WHAL_RATE_TABLE *
+whalGetRateTable(WLAN_PHY_MODE wlanMode)
+{
+    AR6000_PHY_STRUCT    *pPhyStruct=&gpPhyStruct;
+    A_ASSERT(wlanMode < MODE_MAX);
+
+    return pPhyStruct->pHwRateTable[wlanMode];
+}
+

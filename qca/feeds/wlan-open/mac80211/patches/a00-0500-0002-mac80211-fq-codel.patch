@@ -1,0 +1,73 @@
+--- a/compat/backport-4.6.c
++++ b/compat/backport-4.6.c
+@@ -8,6 +8,13 @@
+  * published by the Free Software Foundation.
+  */
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
++#include <linux/kernel.h>
++#include <linux/skbuff.h>
++#include <linux/jhash.h>
++#include <net/flow_keys.h>
++#endif
++
+ #include <linux/kernel.h>
+ #include <linux/uaccess.h>
+ #include <linux/export.h>
+@@ -75,3 +82,46 @@ int kstrtobool_from_user(const char __us
+ 	return kstrtobool(buf, res);
+ }
+ EXPORT_SYMBOL_GPL(kstrtobool_from_user);
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0)
++static __always_inline u32 __flow_hash_4words(u32 a, u32 b, u32 c, u32 keyval)
++{
++        return jhash_3words(a, b, c, keyval);
++}
++
++static inline u32 ___flow_hash_from_keys(struct flow_keys *keys, u32 keyval)
++{
++        u32 hash;
++
++        /* get a consistent hash (same value on both flow directions) */
++        if (((__force u32)keys->dst < (__force u32)keys->src) ||
++            (((__force u32)keys->dst == (__force u32)keys->src) &&
++             ((__force u16)keys->port16[1] < (__force u16)keys->port16[0]))) {
++                swap(keys->dst, keys->src);
++                swap(keys->port16[0], keys->port16[1]);
++        }
++
++        hash = __flow_hash_4words((__force u32)keys->dst,
++                                  (__force u32)keys->src,
++                                  (__force u32)keys->ports, keyval);
++        if (!hash)
++                hash = 1;
++
++        return hash;
++}
++static inline u32 ___skb_get_hash(const struct sk_buff *skb,
++				  struct flow_keys *keys, u32 keyval)
++{
++	memset(keys, 0, sizeof(*keys));
++	skb_flow_dissect(skb, keys);
++	return ___flow_hash_from_keys(keys, keyval);
++}
++
++__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb)
++{
++	struct flow_keys keys;
++
++	return ___skb_get_hash(skb, &keys, perturb);
++}
++EXPORT_SYMBOL(skb_get_hash_perturb);
++#endif
+--- a/include/net/fq_impl.h
++++ b/include/net/fq_impl.h
+@@ -11,6 +11,7 @@
+ #include <net/fq.h>
+ 
+ /* functions that are embedded into includer */
++__u32 skb_get_hash_perturb(const struct sk_buff *skb, u32 perturb);
+ 
+ static struct sk_buff *fq_flow_dequeue(struct fq *fq,
+ 				       struct fq_flow *flow)

@@ -1,0 +1,1587 @@
+--- a/drivers/net/wireless/ath/wil6210/cfg80211.c
++++ b/drivers/net/wireless/ath/wil6210/cfg80211.c
+@@ -454,7 +454,7 @@ static int wil_cfg80211_get_station(struct wiphy *wiphy,
+ 
+ 	int cid = wil_find_cid(wil, mac);
+ 
+-	wil_dbg_misc(wil, "%s(%pM) CID %d\n", __func__, mac, cid);
++	wil_dbg_misc(wil, "get_station: %pM CID %d\n", mac, cid);
+ 	if (cid < 0)
+ 		return cid;
+ 
+@@ -493,7 +493,7 @@ static int wil_cfg80211_dump_station(struct wiphy *wiphy,
+ 		return -ENOENT;
+ 
+ 	ether_addr_copy(mac, wil->sta[cid].addr);
+-	wil_dbg_misc(wil, "%s(%pM) CID %d\n", __func__, mac, cid);
++	wil_dbg_misc(wil, "dump_station: %pM CID %d\n", mac, cid);
+ 
+ 	rc = wil_cid_fill_sinfo(wil, cid, sinfo);
+ 
+@@ -510,16 +510,15 @@ wil_cfg80211_add_iface(struct wiphy *wiphy, const char *name,
+ 	struct net_device *ndev = wil_to_ndev(wil);
+ 	struct wireless_dev *p2p_wdev;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "add_iface\n");
+ 
+ 	if (type != NL80211_IFTYPE_P2P_DEVICE) {
+-		wil_err(wil, "%s: unsupported iftype %d\n", __func__, type);
++		wil_err(wil, "unsupported iftype %d\n", type);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+ 	if (wil->p2p_wdev) {
+-		wil_err(wil, "%s: P2P_DEVICE interface already created\n",
+-			__func__);
++		wil_err(wil, "P2P_DEVICE interface already created\n");
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -542,11 +541,10 @@ static int wil_cfg80211_del_iface(struct wiphy *wiphy,
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "del_iface\n");
+ 
+ 	if (wdev != wil->p2p_wdev) {
+-		wil_err(wil, "%s: delete of incorrect interface 0x%p\n",
+-			__func__, wdev);
++		wil_err(wil, "delete of incorrect interface 0x%p\n", wdev);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -564,7 +562,7 @@ static int wil_cfg80211_change_iface(struct wiphy *wiphy,
+ 	struct wireless_dev *wdev = wil_to_wdev(wil);
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s() type=%d\n", __func__, type);
++	wil_dbg_misc(wil, "change_iface: type=%d\n", type);
+ 
+ 	if (netif_running(wil_to_ndev(wil)) && !wil_is_recovery_blocked(wil)) {
+ 		wil_dbg_misc(wil, "interface is up. resetting...\n");
+@@ -611,8 +609,7 @@ static int wil_cfg80211_scan(struct wiphy *wiphy,
+ 	uint i, n;
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s(), wdev=0x%p iftype=%d\n",
+-		     __func__, wdev, wdev->iftype);
++	wil_dbg_misc(wil, "scan: wdev=0x%p iftype=%d\n", wdev, wdev->iftype);
+ 
+ 	/* check we are client side */
+ 	switch (wdev->iftype) {
+@@ -817,7 +814,7 @@ static int wil_cfg80211_connect(struct wiphy *wiphy,
+ 	int rc = 0;
+ 	enum ieee80211_bss_type bss_type = IEEE80211_BSS_TYPE_ESS;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "connect\n");
+ 	wil_print_connect_params(wil, sme);
+ 
+ 	if (test_bit(wil_status_fwconnecting, wil->status) ||
+@@ -949,12 +946,11 @@ static int wil_cfg80211_disconnect(struct wiphy *wiphy,
+ 	int rc;
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s(reason=%d)\n", __func__, reason_code);
++	wil_dbg_misc(wil, "disconnect: reason=%d\n", reason_code);
+ 
+ 	if (!(test_bit(wil_status_fwconnecting, wil->status) ||
+ 	      test_bit(wil_status_fwconnected, wil->status))) {
+-		wil_err(wil, "%s: Disconnect was called while disconnected\n",
+-			__func__);
++		wil_err(wil, "Disconnect was called while disconnected\n");
+ 		return 0;
+ 	}
+ 
+@@ -962,7 +958,7 @@ static int wil_cfg80211_disconnect(struct wiphy *wiphy,
+ 		      WMI_DISCONNECT_EVENTID, NULL, 0,
+ 		      WIL6210_DISCONNECT_TO_MS);
+ 	if (rc)
+-		wil_err(wil, "%s: disconnect error %d\n", __func__, rc);
++		wil_err(wil, "disconnect error %d\n", rc);
+ 
+ 	return rc;
+ }
+@@ -1010,7 +1006,7 @@ int wil_cfg80211_mgmt_tx(struct wiphy *wiphy, struct wireless_dev *wdev,
+ 	 * different from currently "listened" channel and fail if it is.
+ 	 */
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "mgmt_tx\n");
+ 	print_hex_dump_bytes("mgmt tx frame ", DUMP_PREFIX_OFFSET, buf, len);
+ 
+ 	cmd = kmalloc(sizeof(*cmd) + len, GFP_KERNEL);
+@@ -1071,7 +1067,7 @@ static enum wmi_key_usage wil_detect_key_usage(struct wil6210_priv *wil,
+ 			break;
+ 		}
+ 	}
+-	wil_dbg_misc(wil, "%s() -> %s\n", __func__, key_usage_str[rc]);
++	wil_dbg_misc(wil, "detect_key_usage: -> %s\n", key_usage_str[rc]);
+ 
+ 	return rc;
+ }
+@@ -1176,13 +1172,13 @@ static int wil_cfg80211_add_key(struct wiphy *wiphy,
+ 		return -EINVAL;
+ 	}
+ 
+-	wil_dbg_misc(wil, "%s(%pM %s[%d] PN %*phN)\n", __func__,
++	wil_dbg_misc(wil, "add_key: %pM %s[%d] PN %*phN\n",
+ 		     mac_addr, key_usage_str[key_usage], key_index,
+ 		     params->seq_len, params->seq);
+ 
+ 	if (IS_ERR(cs)) {
+-		wil_err(wil, "Not connected, %s(%pM %s[%d] PN %*phN)\n",
+-			__func__, mac_addr, key_usage_str[key_usage], key_index,
++		wil_err(wil, "Not connected, %pM %s[%d] PN %*phN\n",
++			mac_addr, key_usage_str[key_usage], key_index,
+ 			params->seq_len, params->seq);
+ 		return -EINVAL;
+ 	}
+@@ -1191,8 +1187,8 @@ static int wil_cfg80211_add_key(struct wiphy *wiphy,
+ 
+ 	if (params->seq && params->seq_len != IEEE80211_GCMP_PN_LEN) {
+ 		wil_err(wil,
+-			"Wrong PN len %d, %s(%pM %s[%d] PN %*phN)\n",
+-			params->seq_len, __func__, mac_addr,
++			"Wrong PN len %d, %pM %s[%d] PN %*phN\n",
++			params->seq_len, mac_addr,
+ 			key_usage_str[key_usage], key_index,
+ 			params->seq_len, params->seq);
+ 		return -EINVAL;
+@@ -1216,11 +1212,11 @@ static int wil_cfg80211_del_key(struct wiphy *wiphy,
+ 	struct wil_sta_info *cs = wil_find_sta_by_key_usage(wil, key_usage,
+ 							    mac_addr);
+ 
+-	wil_dbg_misc(wil, "%s(%pM %s[%d])\n", __func__, mac_addr,
++	wil_dbg_misc(wil, "del_key: %pM %s[%d]\n", mac_addr,
+ 		     key_usage_str[key_usage], key_index);
+ 
+ 	if (IS_ERR(cs))
+-		wil_info(wil, "Not connected, %s(%pM %s[%d])\n", __func__,
++		wil_info(wil, "Not connected, %pM %s[%d]\n",
+ 			 mac_addr, key_usage_str[key_usage], key_index);
+ 
+ 	if (!IS_ERR_OR_NULL(cs))
+@@ -1237,7 +1233,7 @@ static int wil_cfg80211_set_default_key(struct wiphy *wiphy,
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s: entered\n", __func__);
++	wil_dbg_misc(wil, "set_default_key: entered\n");
+ 	return 0;
+ }
+ 
+@@ -1250,8 +1246,9 @@ static int wil_remain_on_channel(struct wiphy *wiphy,
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s() center_freq=%d, duration=%d iftype=%d\n",
+-		     __func__, chan->center_freq, duration, wdev->iftype);
++	wil_dbg_misc(wil,
++		     "remain_on_channel: center_freq=%d, duration=%d iftype=%d\n",
++		     chan->center_freq, duration, wdev->iftype);
+ 
+ 	rc = wil_p2p_listen(wil, wdev, duration, chan, cookie);
+ 	return rc;
+@@ -1263,7 +1260,7 @@ static int wil_cancel_remain_on_channel(struct wiphy *wiphy,
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "cancel_remain_on_channel\n");
+ 
+ 	return wil_p2p_cancel_listen(wil, cookie);
+ }
+@@ -1419,9 +1416,9 @@ static int _wil_cfg80211_start_ap(struct wiphy *wiphy,
+ 	if (pbss)
+ 		wmi_nettype = WMI_NETTYPE_P2P;
+ 
+-	wil_dbg_misc(wil, "%s: is_go=%d\n", __func__, is_go);
++	wil_dbg_misc(wil, "start_ap: is_go=%d\n", is_go);
+ 	if (is_go && !pbss) {
+-		wil_err(wil, "%s: P2P GO must be in PBSS\n", __func__);
++		wil_err(wil, "P2P GO must be in PBSS\n");
+ 		return -ENOTSUPP;
+ 	}
+ 
+@@ -1476,7 +1473,7 @@ static int wil_cfg80211_change_beacon(struct wiphy *wiphy,
+ 	int rc;
+ 	u32 privacy = 0;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "change_beacon\n");
+ 	wil_print_bcon_data(bcon);
+ 
+ 	if (bcon->tail &&
+@@ -1515,7 +1512,7 @@ static int wil_cfg80211_start_ap(struct wiphy *wiphy,
+ 	struct cfg80211_crypto_settings *crypto = &info->crypto;
+ 	u8 hidden_ssid;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "start_ap\n");
+ 
+ 	if (!channel) {
+ 		wil_err(wil, "AP: No channel???\n");
+@@ -1566,7 +1563,7 @@ static int wil_cfg80211_stop_ap(struct wiphy *wiphy,
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "stop_ap\n");
+ 
+ 	netif_carrier_off(ndev);
+ 	wil_set_recovery_state(wil, fw_recovery_idle);
+@@ -1610,7 +1607,7 @@ static int wil_cfg80211_del_station(struct wiphy *wiphy,
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s(%pM, reason=%d)\n", __func__, params->mac,
++	wil_dbg_misc(wil, "del_station: %pM, reason=%d\n", params->mac,
+ 		     params->reason_code);
+ 
+ 	mutex_lock(&wil->mutex);
+@@ -1715,7 +1712,7 @@ void wil_probe_client_flush(struct wil6210_priv *wil)
+ {
+ 	struct wil_probe_client_req *req, *t;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "probe_client_flush\n");
+ 
+ 	mutex_lock(&wil->probe_client_mutex);
+ 
+@@ -1735,7 +1732,7 @@ static int wil_cfg80211_probe_client(struct wiphy *wiphy,
+ 	struct wil_probe_client_req *req;
+ 	int cid = wil_find_cid(wil, peer);
+ 
+-	wil_dbg_misc(wil, "%s(%pM => CID %d)\n", __func__, peer, cid);
++	wil_dbg_misc(wil, "probe_client: %pM => CID %d\n", peer, cid);
+ 
+ 	if (cid < 0)
+ 		return -ENOLINK;
+@@ -1763,7 +1760,7 @@ static int wil_cfg80211_change_bss(struct wiphy *wiphy,
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+ 	if (params->ap_isolate >= 0) {
+-		wil_dbg_misc(wil, "%s(ap_isolate %d => %d)\n", __func__,
++		wil_dbg_misc(wil, "change_bss: ap_isolate %d => %d\n",
+ 			     wil->ap_isolate, params->ap_isolate);
+ 		wil->ap_isolate = params->ap_isolate;
+ 	}
+@@ -1776,7 +1773,7 @@ static int wil_cfg80211_start_p2p_device(struct wiphy *wiphy,
+ {
+ 	struct wil6210_priv *wil = wiphy_to_wil(wiphy);
+ 
+-	wil_dbg_misc(wil, "%s: entered\n", __func__);
++	wil_dbg_misc(wil, "start_p2p_device: entered\n");
+ 	wil->p2p.p2p_dev_started = 1;
+ 	return 0;
+ }
+@@ -1790,7 +1787,7 @@ static void wil_cfg80211_stop_p2p_device(struct wiphy *wiphy,
+ 	if (!p2p->p2p_dev_started)
+ 		return;
+ 
+-	wil_dbg_misc(wil, "%s: entered\n", __func__);
++	wil_dbg_misc(wil, "stop_p2p_device: entered\n");
+ 	mutex_lock(&wil->mutex);
+ 	mutex_lock(&wil->p2p_wdev_mutex);
+ 	wil_p2p_stop_radio_operations(wil);
+--- a/drivers/net/wireless/ath/wil6210/debugfs.c
++++ b/drivers/net/wireless/ath/wil6210/debugfs.c
+@@ -813,7 +813,7 @@ static ssize_t wil_write_file_txmgmt(struct file *file, const char __user *buf,
+ 	rc = wil_cfg80211_mgmt_tx(wiphy, wdev, &params, NULL);
+ 
+ 	kfree(frame);
+-	wil_info(wil, "%s() -> %d\n", __func__, rc);
++	wil_info(wil, "-> %d\n", rc);
+ 
+ 	return len;
+ }
+@@ -855,7 +855,7 @@ static ssize_t wil_write_file_wmi(struct file *file, const char __user *buf,
+ 	rc1 = wmi_send(wil, cmdid, cmd, cmdlen);
+ 	kfree(wmi);
+ 
+-	wil_info(wil, "%s(0x%04x[%d]) -> %d\n", __func__, cmdid, cmdlen, rc1);
++	wil_info(wil, "0x%04x[%d] -> %d\n", cmdid, cmdlen, rc1);
+ 
+ 	return rc;
+ }
+--- a/drivers/net/wireless/ath/wil6210/ethtool.c
++++ b/drivers/net/wireless/ath/wil6210/ethtool.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014 Qualcomm Atheros, Inc.
++ * Copyright (c) 2014,2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -27,7 +27,7 @@ static int wil_ethtoolops_begin(struct net_device *ndev)
+ 
+ 	mutex_lock(&wil->mutex);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "ethtoolops_begin\n");
+ 
+ 	return 0;
+ }
+@@ -36,7 +36,7 @@ static void wil_ethtoolops_complete(struct net_device *ndev)
+ {
+ 	struct wil6210_priv *wil = ndev_to_wil(ndev);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "ethtoolops_complete\n");
+ 
+ 	mutex_unlock(&wil->mutex);
+ }
+@@ -48,7 +48,7 @@ static int wil_ethtoolops_get_coalesce(struct net_device *ndev,
+ 	u32 tx_itr_en, tx_itr_val = 0;
+ 	u32 rx_itr_en, rx_itr_val = 0;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "ethtoolops_get_coalesce\n");
+ 
+ 	tx_itr_en = wil_r(wil, RGF_DMA_ITR_TX_CNT_CTL);
+ 	if (tx_itr_en & BIT_DMA_ITR_TX_CNT_CTL_EN)
+@@ -68,7 +68,7 @@ static int wil_ethtoolops_set_coalesce(struct net_device *ndev,
+ {
+ 	struct wil6210_priv *wil = ndev_to_wil(ndev);
+ 
+-	wil_dbg_misc(wil, "%s(rx %d usec, tx %d usec)\n", __func__,
++	wil_dbg_misc(wil, "ethtoolops_set_coalesce: rx %d usec, tx %d usec\n",
+ 		     cp->rx_coalesce_usecs, cp->tx_coalesce_usecs);
+ 
+ 	if (wil->wdev->iftype == NL80211_IFTYPE_MONITOR) {
+--- a/drivers/net/wireless/ath/wil6210/interrupt.c
++++ b/drivers/net/wireless/ath/wil6210/interrupt.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2016 Qualcomm Atheros, Inc.
++ * Copyright (c) 2012-2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -94,7 +94,7 @@ static void wil6210_mask_irq_rx(struct wil6210_priv *wil)
+ 
+ static void wil6210_mask_irq_misc(struct wil6210_priv *wil, bool mask_halp)
+ {
+-	wil_dbg_irq(wil, "%s: mask_halp(%s)\n", __func__,
++	wil_dbg_irq(wil, "mask_irq_misc: mask_halp(%s)\n",
+ 		    mask_halp ? "true" : "false");
+ 
+ 	wil_w(wil, RGF_DMA_EP_MISC_ICR + offsetof(struct RGF_ICR, IMS),
+@@ -103,7 +103,7 @@ static void wil6210_mask_irq_misc(struct wil6210_priv *wil, bool mask_halp)
+ 
+ void wil6210_mask_halp(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "mask_halp\n");
+ 
+ 	wil_w(wil, RGF_DMA_EP_MISC_ICR + offsetof(struct RGF_ICR, IMS),
+ 	      BIT_DMA_EP_MISC_ICR_HALP);
+@@ -111,7 +111,7 @@ void wil6210_mask_halp(struct wil6210_priv *wil)
+ 
+ static void wil6210_mask_irq_pseudo(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "mask_irq_pseudo\n");
+ 
+ 	wil_w(wil, RGF_DMA_PSEUDO_CAUSE_MASK_SW, WIL6210_IRQ_DISABLE);
+ 
+@@ -134,7 +134,7 @@ void wil6210_unmask_irq_rx(struct wil6210_priv *wil)
+ 
+ static void wil6210_unmask_irq_misc(struct wil6210_priv *wil, bool unmask_halp)
+ {
+-	wil_dbg_irq(wil, "%s: unmask_halp(%s)\n", __func__,
++	wil_dbg_irq(wil, "unmask_irq_misc: unmask_halp(%s)\n",
+ 		    unmask_halp ? "true" : "false");
+ 
+ 	wil_w(wil, RGF_DMA_EP_MISC_ICR + offsetof(struct RGF_ICR, IMC),
+@@ -143,7 +143,7 @@ static void wil6210_unmask_irq_misc(struct wil6210_priv *wil, bool unmask_halp)
+ 
+ static void wil6210_unmask_halp(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "unmask_halp\n");
+ 
+ 	wil_w(wil, RGF_DMA_EP_MISC_ICR + offsetof(struct RGF_ICR, IMC),
+ 	      BIT_DMA_EP_MISC_ICR_HALP);
+@@ -151,7 +151,7 @@ static void wil6210_unmask_halp(struct wil6210_priv *wil)
+ 
+ static void wil6210_unmask_irq_pseudo(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "unmask_irq_pseudo\n");
+ 
+ 	set_bit(wil_status_irqen, wil->status);
+ 
+@@ -160,7 +160,7 @@ static void wil6210_unmask_irq_pseudo(struct wil6210_priv *wil)
+ 
+ void wil_mask_irq(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "mask_irq\n");
+ 
+ 	wil6210_mask_irq_tx(wil);
+ 	wil6210_mask_irq_rx(wil);
+@@ -170,7 +170,7 @@ void wil_mask_irq(struct wil6210_priv *wil)
+ 
+ void wil_unmask_irq(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "unmask_irq\n");
+ 
+ 	wil_w(wil, RGF_DMA_EP_RX_ICR + offsetof(struct RGF_ICR, ICC),
+ 	      WIL_ICR_ICC_VALUE);
+@@ -187,7 +187,7 @@ void wil_unmask_irq(struct wil6210_priv *wil)
+ 
+ void wil_configure_interrupt_moderation(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "configure_interrupt_moderation\n");
+ 
+ 	/* disable interrupt moderation for monitor
+ 	 * to get better timestamp precision
+@@ -400,7 +400,7 @@ static irqreturn_t wil6210_irq_misc(int irq, void *cookie)
+ 	}
+ 
+ 	if (isr & BIT_DMA_EP_MISC_ICR_HALP) {
+-		wil_dbg_irq(wil, "%s: HALP IRQ invoked\n", __func__);
++		wil_dbg_irq(wil, "irq_misc: HALP IRQ invoked\n");
+ 		wil6210_mask_halp(wil);
+ 		isr &= ~BIT_DMA_EP_MISC_ICR_HALP;
+ 		complete(&wil->halp.comp);
+@@ -599,7 +599,7 @@ void wil6210_clear_irq(struct wil6210_priv *wil)
+ 
+ void wil6210_set_halp(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "set_halp\n");
+ 
+ 	wil_w(wil, RGF_DMA_EP_MISC_ICR + offsetof(struct RGF_ICR, ICS),
+ 	      BIT_DMA_EP_MISC_ICR_HALP);
+@@ -607,7 +607,7 @@ void wil6210_set_halp(struct wil6210_priv *wil)
+ 
+ void wil6210_clear_halp(struct wil6210_priv *wil)
+ {
+-	wil_dbg_irq(wil, "%s()\n", __func__);
++	wil_dbg_irq(wil, "clear_halp\n");
+ 
+ 	wil_w(wil, RGF_DMA_EP_MISC_ICR + offsetof(struct RGF_ICR, ICR),
+ 	      BIT_DMA_EP_MISC_ICR_HALP);
+@@ -618,7 +618,7 @@ int wil6210_init_irq(struct wil6210_priv *wil, int irq, bool use_msi)
+ {
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s(%s)\n", __func__, use_msi ? "MSI" : "INTx");
++	wil_dbg_misc(wil, "init_irq: %s\n", use_msi ? "MSI" : "INTx");
+ 
+ 	rc = request_threaded_irq(irq, wil6210_hardirq,
+ 				  wil6210_thread_irq,
+@@ -629,7 +629,7 @@ int wil6210_init_irq(struct wil6210_priv *wil, int irq, bool use_msi)
+ 
+ void wil6210_fini_irq(struct wil6210_priv *wil, int irq)
+ {
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "fini_irq:\n");
+ 
+ 	wil_mask_irq(wil);
+ 	free_irq(irq, wil);
+--- a/drivers/net/wireless/ath/wil6210/main.c
++++ b/drivers/net/wireless/ath/wil6210/main.c
+@@ -173,8 +173,8 @@ __acquires(&sta->tid_rx_lock) __releases(&sta->tid_rx_lock)
+ 	struct wil_sta_info *sta = &wil->sta[cid];
+ 
+ 	might_sleep();
+-	wil_dbg_misc(wil, "%s(CID %d, status %d)\n", __func__, cid,
+-		     sta->status);
++	wil_dbg_misc(wil, "disconnect_cid: CID %d, status %d\n",
++		     cid, sta->status);
+ 	/* inform upper/lower layers */
+ 	if (sta->status != wil_sta_unused) {
+ 		if (!from_event) {
+@@ -242,7 +242,7 @@ static void _wil6210_disconnect(struct wil6210_priv *wil, const u8 *bssid,
+ 		return;
+ 
+ 	might_sleep();
+-	wil_info(wil, "%s(bssid=%pM, reason=%d, ev%s)\n", __func__, bssid,
++	wil_info(wil, "bssid=%pM, reason=%d, ev%s\n", bssid,
+ 		 reason_code, from_event ? "+" : "-");
+ 
+ 	/* Cases are:
+@@ -352,7 +352,7 @@ static int wil_wait_for_recovery(struct wil6210_priv *wil)
+ 
+ void wil_set_recovery_state(struct wil6210_priv *wil, int state)
+ {
+-	wil_dbg_misc(wil, "%s(%d -> %d)\n", __func__,
++	wil_dbg_misc(wil, "set_recovery_state: %d -> %d\n",
+ 		     wil->recovery_state, state);
+ 
+ 	wil->recovery_state = state;
+@@ -510,7 +510,7 @@ int wil_priv_init(struct wil6210_priv *wil)
+ {
+ 	uint i;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "priv_init\n");
+ 
+ 	memset(wil->sta, 0, sizeof(wil->sta));
+ 	for (i = 0; i < WIL6210_MAX_CID; i++)
+@@ -587,7 +587,7 @@ out_wmi_wq:
+ void wil6210_disconnect(struct wil6210_priv *wil, const u8 *bssid,
+ 			u16 reason_code, bool from_event)
+ {
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "disconnect\n");
+ 
+ 	del_timer_sync(&wil->connect_timer);
+ 	_wil6210_disconnect(wil, bssid, reason_code, from_event);
+@@ -595,7 +595,7 @@ void wil6210_disconnect(struct wil6210_priv *wil, const u8 *bssid,
+ 
+ void wil_priv_deinit(struct wil6210_priv *wil)
+ {
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "priv_deinit\n");
+ 
+ 	wil_ftm_deinit(wil);
+ 	wil_set_recovery_state(wil, fw_recovery_idle);
+@@ -630,7 +630,7 @@ static inline void wil_release_cpu(struct wil6210_priv *wil)
+ 
+ static void wil_set_oob_mode(struct wil6210_priv *wil, bool enable)
+ {
+-	wil_info(wil, "%s: enable=%d\n", __func__, enable);
++	wil_info(wil, "enable=%d\n", enable);
+ 	if (enable)
+ 		wil_s(wil, RGF_USER_USAGE_6, BIT_USER_OOB_MODE);
+ 	else
+@@ -886,7 +886,7 @@ int wil_reset(struct wil6210_priv *wil, bool load_fw)
+ {
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "reset\n");
+ 
+ 	WARN_ON(!mutex_is_locked(&wil->mutex));
+ 	WARN_ON(test_bit(wil_status_napi_en, wil->status));
+@@ -909,9 +909,8 @@ int wil_reset(struct wil6210_priv *wil, bool load_fw)
+ 		rc = wil->platform_ops.notify(wil->platform_handle,
+ 					      WIL_PLATFORM_EVT_PRE_RESET);
+ 		if (rc)
+-			wil_err(wil,
+-				"%s: PRE_RESET platform notify failed, rc %d\n",
+-				__func__, rc);
++			wil_err(wil, "PRE_RESET platform notify failed, rc %d\n",
++				rc);
+ 	}
+ 
+ 	set_bit(wil_status_resetting, wil->status);
+@@ -1001,8 +1000,7 @@ int wil_reset(struct wil6210_priv *wil, bool load_fw)
+ 		/* check FW is responsive */
+ 		rc = wmi_echo(wil);
+ 		if (rc) {
+-			wil_err(wil, "%s: wmi_echo failed, rc %d\n",
+-				__func__, rc);
++			wil_err(wil, "wmi_echo failed, rc %d\n", rc);
+ 			return rc;
+ 		}
+ 
+@@ -1012,9 +1010,8 @@ int wil_reset(struct wil6210_priv *wil, bool load_fw)
+ 			rc = wil->platform_ops.notify(wil->platform_handle,
+ 						      WIL_PLATFORM_EVT_FW_RDY);
+ 			if (rc) {
+-				wil_err(wil,
+-					"%s: FW_RDY notify failed, rc %d\n",
+-					__func__, rc);
++				wil_err(wil, "FW_RDY notify failed, rc %d\n",
++					rc);
+ 				rc = 0;
+ 			}
+ 		}
+@@ -1098,7 +1095,7 @@ int wil_up(struct wil6210_priv *wil)
+ {
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "up\n");
+ 
+ 	mutex_lock(&wil->mutex);
+ 	rc = __wil_up(wil);
+@@ -1140,7 +1137,7 @@ int wil_down(struct wil6210_priv *wil)
+ {
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "down\n");
+ 
+ 	wil_set_recovery_state(wil, fw_recovery_idle);
+ 	mutex_lock(&wil->mutex);
+@@ -1173,25 +1170,24 @@ void wil_halp_vote(struct wil6210_priv *wil)
+ 
+ 	mutex_lock(&wil->halp.lock);
+ 
+-	wil_dbg_irq(wil, "%s: start, HALP ref_cnt (%d)\n", __func__,
++	wil_dbg_irq(wil, "halp_vote: start, HALP ref_cnt (%d)\n",
+ 		    wil->halp.ref_cnt);
+ 
+ 	if (++wil->halp.ref_cnt == 1) {
+ 		wil6210_set_halp(wil);
+ 		rc = wait_for_completion_timeout(&wil->halp.comp, to_jiffies);
+ 		if (!rc) {
+-			wil_err(wil, "%s: HALP vote timed out\n", __func__);
++			wil_err(wil, "HALP vote timed out\n");
+ 			/* Mask HALP as done in case the interrupt is raised */
+ 			wil6210_mask_halp(wil);
+ 		} else {
+ 			wil_dbg_irq(wil,
+-				    "%s: HALP vote completed after %d ms\n",
+-				    __func__,
++				    "halp_vote: HALP vote completed after %d ms\n",
+ 				    jiffies_to_msecs(to_jiffies - rc));
+ 		}
+ 	}
+ 
+-	wil_dbg_irq(wil, "%s: end, HALP ref_cnt (%d)\n", __func__,
++	wil_dbg_irq(wil, "halp_vote: end, HALP ref_cnt (%d)\n",
+ 		    wil->halp.ref_cnt);
+ 
+ 	mutex_unlock(&wil->halp.lock);
+@@ -1203,15 +1199,15 @@ void wil_halp_unvote(struct wil6210_priv *wil)
+ 
+ 	mutex_lock(&wil->halp.lock);
+ 
+-	wil_dbg_irq(wil, "%s: start, HALP ref_cnt (%d)\n", __func__,
++	wil_dbg_irq(wil, "halp_unvote: start, HALP ref_cnt (%d)\n",
+ 		    wil->halp.ref_cnt);
+ 
+ 	if (--wil->halp.ref_cnt == 0) {
+ 		wil6210_clear_halp(wil);
+-		wil_dbg_irq(wil, "%s: HALP unvote\n", __func__);
++		wil_dbg_irq(wil, "HALP unvote\n");
+ 	}
+ 
+-	wil_dbg_irq(wil, "%s: end, HALP ref_cnt (%d)\n", __func__,
++	wil_dbg_irq(wil, "halp_unvote:end, HALP ref_cnt (%d)\n",
+ 		    wil->halp.ref_cnt);
+ 
+ 	mutex_unlock(&wil->halp.lock);
+--- a/drivers/net/wireless/ath/wil6210/netdev.c
++++ b/drivers/net/wireless/ath/wil6210/netdev.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2016 Qualcomm Atheros, Inc.
++ * Copyright (c) 2012-2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -25,7 +25,7 @@ static int wil_open(struct net_device *ndev)
+ {
+ 	struct wil6210_priv *wil = ndev_to_wil(ndev);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "open\n");
+ 
+ #if defined(CPTCFG_WIL6210_NSS_SUPPORT)
+ 	if (!wil->nss_ctx) {
+@@ -39,7 +39,7 @@ static int wil_open(struct net_device *ndev)
+ #endif
+ 
+ 	if (debug_fw) {
+-		wil_err(wil, "%s() while in debug_fw mode\n", __func__);
++		wil_err(wil, "while in debug_fw mode\n");
+ 		return -EINVAL;
+ 	}
+ 
+@@ -50,7 +50,7 @@ static int wil_stop(struct net_device *ndev)
+ {
+ 	struct wil6210_priv *wil = ndev_to_wil(ndev);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "stop\n");
+ 
+ 	return wil_down(wil);
+ }
+@@ -146,7 +146,7 @@ void *wil_if_alloc(struct device *dev)
+ 	wil->wdev = wdev;
+ 	wil->radio_wdev = wdev;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "if_alloc\n");
+ 
+ 	rc = wil_priv_init(wil);
+ 	if (rc) {
+@@ -193,7 +193,7 @@ void wil_if_free(struct wil6210_priv *wil)
+ {
+ 	struct net_device *ndev = wil_to_ndev(wil);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "if_free\n");
+ 
+ 	if (!ndev)
+ 		return;
+@@ -248,7 +248,7 @@ void wil_if_remove(struct wil6210_priv *wil)
+ 	struct net_device *ndev = wil_to_ndev(wil);
+ 	struct wireless_dev *wdev = wil_to_wdev(wil);
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "if_remove\n");
+ 
+ #if defined(CPTCFG_WIL6210_NSS_SUPPORT)
+ 	if (wil->nss_ctx)
+--- a/drivers/net/wireless/ath/wil6210/p2p.c
++++ b/drivers/net/wireless/ath/wil6210/p2p.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014-2016 Qualcomm Atheros, Inc.
++ * Copyright (c) 2014-2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -69,7 +69,7 @@ void wil_p2p_discovery_timer_fn(ulong x)
+ {
+ 	struct wil6210_priv *wil = (void *)x;
+ 
+-	wil_dbg_misc(wil, "%s\n", __func__);
++	wil_dbg_misc(wil, "p2p_discovery_timer_fn\n");
+ 
+ 	schedule_work(&wil->p2p.discovery_expired_work);
+ }
+@@ -80,27 +80,25 @@ int wil_p2p_search(struct wil6210_priv *wil,
+ 	int rc;
+ 	struct wil_p2p_info *p2p = &wil->p2p;
+ 
+-	wil_dbg_misc(wil, "%s: channel %d\n",
+-		     __func__, P2P_DMG_SOCIAL_CHANNEL);
++	wil_dbg_misc(wil, "p2p_search: channel %d\n", P2P_DMG_SOCIAL_CHANNEL);
+ 
+ 	lockdep_assert_held(&wil->mutex);
+ 
+ 	if (p2p->discovery_started) {
+-		wil_err(wil, "%s: search failed. discovery already ongoing\n",
+-			__func__);
++		wil_err(wil, "search failed. discovery already ongoing\n");
+ 		rc = -EBUSY;
+ 		goto out;
+ 	}
+ 
+ 	rc = wmi_p2p_cfg(wil, P2P_DMG_SOCIAL_CHANNEL, P2P_DEFAULT_BI);
+ 	if (rc) {
+-		wil_err(wil, "%s: wmi_p2p_cfg failed\n", __func__);
++		wil_err(wil, "wmi_p2p_cfg failed\n");
+ 		goto out;
+ 	}
+ 
+ 	rc = wmi_set_ssid(wil, strlen(P2P_WILDCARD_SSID), P2P_WILDCARD_SSID);
+ 	if (rc) {
+-		wil_err(wil, "%s: wmi_set_ssid failed\n", __func__);
++		wil_err(wil, "wmi_set_ssid failed\n");
+ 		goto out_stop;
+ 	}
+ 
+@@ -108,8 +106,7 @@ int wil_p2p_search(struct wil6210_priv *wil,
+ 	rc = wmi_set_ie(wil, WMI_FRAME_PROBE_REQ,
+ 			request->ie_len, request->ie);
+ 	if (rc) {
+-		wil_err(wil, "%s: wmi_set_ie(WMI_FRAME_PROBE_REQ) failed\n",
+-			__func__);
++		wil_err(wil, "wmi_set_ie(WMI_FRAME_PROBE_REQ) failed\n");
+ 		goto out_stop;
+ 	}
+ 
+@@ -119,14 +116,13 @@ int wil_p2p_search(struct wil6210_priv *wil,
+ 	rc = wmi_set_ie(wil, WMI_FRAME_PROBE_RESP,
+ 			request->ie_len, request->ie);
+ 	if (rc) {
+-		wil_err(wil, "%s: wmi_set_ie(WMI_FRAME_PROBE_RESP) failed\n",
+-			__func__);
++		wil_err(wil, "wmi_set_ie(WMI_FRAME_PROBE_RESP) failed\n");
+ 		goto out_stop;
+ 	}
+ 
+ 	rc = wmi_start_search(wil);
+ 	if (rc) {
+-		wil_err(wil, "%s: wmi_start_search failed\n", __func__);
++		wil_err(wil, "wmi_start_search failed\n");
+ 		goto out_stop;
+ 	}
+ 
+@@ -153,12 +149,12 @@ int wil_p2p_listen(struct wil6210_priv *wil, struct wireless_dev *wdev,
+ 	if (!chan)
+ 		return -EINVAL;
+ 
+-	wil_dbg_misc(wil, "%s: duration %d\n", __func__, duration);
++	wil_dbg_misc(wil, "p2p_listen: duration %d\n", duration);
+ 
+ 	mutex_lock(&wil->mutex);
+ 
+ 	if (p2p->discovery_started) {
+-		wil_err(wil, "%s: discovery already ongoing\n", __func__);
++		wil_err(wil, "discovery already ongoing\n");
+ 		rc = -EBUSY;
+ 		goto out;
+ 	}
+@@ -220,8 +216,8 @@ int wil_p2p_cancel_listen(struct wil6210_priv *wil, u64 cookie)
+ 	mutex_lock(&wil->mutex);
+ 
+ 	if (cookie != p2p->cookie) {
+-		wil_info(wil, "%s: Cookie mismatch: 0x%016llx vs. 0x%016llx\n",
+-			 __func__, p2p->cookie, cookie);
++		wil_info(wil, "Cookie mismatch: 0x%016llx vs. 0x%016llx\n",
++			 p2p->cookie, cookie);
+ 		mutex_unlock(&wil->mutex);
+ 		return -ENOENT;
+ 	}
+@@ -231,7 +227,7 @@ int wil_p2p_cancel_listen(struct wil6210_priv *wil, u64 cookie)
+ 	mutex_unlock(&wil->mutex);
+ 
+ 	if (!started) {
+-		wil_err(wil, "%s: listen not started\n", __func__);
++		wil_err(wil, "listen not started\n");
+ 		return -ENOENT;
+ 	}
+ 
+@@ -253,7 +249,7 @@ void wil_p2p_listen_expired(struct work_struct *work)
+ 			struct wil6210_priv, p2p);
+ 	u8 started;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "p2p_listen_expired\n");
+ 
+ 	mutex_lock(&wil->mutex);
+ 	started = wil_p2p_stop_discovery(wil);
+@@ -279,7 +275,7 @@ void wil_p2p_search_expired(struct work_struct *work)
+ 			struct wil6210_priv, p2p);
+ 	u8 started;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "p2p_search_expired\n");
+ 
+ 	mutex_lock(&wil->mutex);
+ 	started = wil_p2p_stop_discovery(wil);
+--- a/drivers/net/wireless/ath/wil6210/pcie_bus.c
++++ b/drivers/net/wireless/ath/wil6210/pcie_bus.c
+@@ -100,7 +100,7 @@ static int wil_if_pcie_enable(struct wil6210_priv *wil)
+ 	int msi_only = pdev->msi_enabled;
+ 	bool _use_msi = use_msi;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "if_pcie_enable\n");
+ 
+ 	pdev->msi_enabled = 0;
+ 
+@@ -145,7 +145,7 @@ static int wil_if_pcie_disable(struct wil6210_priv *wil)
+ {
+ 	struct pci_dev *pdev = wil->pdev;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "if_pcie_disable\n");
+ 
+ 	pci_clear_master(pdev);
+ 	/* disable and release IRQ */
+@@ -310,7 +310,7 @@ static void wil_pcie_remove(struct pci_dev *pdev)
+ 	struct wil6210_priv *wil = pci_get_drvdata(pdev);
+ 	void __iomem *csr = wil->csr;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "pcie_remove\n");
+ 
+ #ifdef CONFIG_PM
+ #ifdef CONFIG_PM_SLEEP
+@@ -349,8 +349,7 @@ static int wil6210_suspend(struct device *dev, bool is_runtime)
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+ 	struct wil6210_priv *wil = pci_get_drvdata(pdev);
+ 
+-	wil_dbg_pm(wil, "%s(%s)\n", __func__,
+-		   is_runtime ? "runtime" : "system");
++	wil_dbg_pm(wil, "suspend: %s\n", is_runtime ? "runtime" : "system");
+ 
+ 	rc = wil_can_suspend(wil, is_runtime);
+ 	if (rc)
+@@ -376,8 +375,7 @@ static int wil6210_resume(struct device *dev, bool is_runtime)
+ 	struct pci_dev *pdev = to_pci_dev(dev);
+ 	struct wil6210_priv *wil = pci_get_drvdata(pdev);
+ 
+-	wil_dbg_pm(wil, "%s(%s)\n", __func__,
+-		   is_runtime ? "runtime" : "system");
++	wil_dbg_pm(wil, "resume: %s\n", is_runtime ? "runtime" : "system");
+ 
+ 	/* allow master */
+ 	pci_set_master(pdev);
+@@ -397,7 +395,7 @@ static int wil6210_pm_notify(struct notifier_block *notify_block,
+ 	int rc = 0;
+ 	enum wil_platform_event evt;
+ 
+-	wil_dbg_pm(wil, "%s: mode (%ld)\n", __func__, mode);
++	wil_dbg_pm(wil, "pm_notify: mode (%ld)\n", mode);
+ 
+ 	switch (mode) {
+ 	case PM_HIBERNATION_PREPARE:
+--- a/drivers/net/wireless/ath/wil6210/pm.c
++++ b/drivers/net/wireless/ath/wil6210/pm.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014,2016 Qualcomm Atheros, Inc.
++ * Copyright (c) 2014,2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -21,8 +21,7 @@ int wil_can_suspend(struct wil6210_priv *wil, bool is_runtime)
+ 	int rc = 0;
+ 	struct wireless_dev *wdev = wil->wdev;
+ 
+-	wil_dbg_pm(wil, "%s(%s)\n", __func__,
+-		   is_runtime ? "runtime" : "system");
++	wil_dbg_pm(wil, "can_suspend: %s\n", is_runtime ? "runtime" : "system");
+ 
+ 	if (!netif_running(wil_to_ndev(wil))) {
+ 		/* can always sleep when down */
+@@ -59,7 +58,7 @@ int wil_can_suspend(struct wil6210_priv *wil, bool is_runtime)
+ 	}
+ 
+ out:
+-	wil_dbg_pm(wil, "%s(%s) => %s (%d)\n", __func__,
++	wil_dbg_pm(wil, "can_suspend: %s => %s (%d)\n",
+ 		   is_runtime ? "runtime" : "system", rc ? "No" : "Yes", rc);
+ 
+ 	return rc;
+@@ -70,8 +69,7 @@ int wil_suspend(struct wil6210_priv *wil, bool is_runtime)
+ 	int rc = 0;
+ 	struct net_device *ndev = wil_to_ndev(wil);
+ 
+-	wil_dbg_pm(wil, "%s(%s)\n", __func__,
+-		   is_runtime ? "runtime" : "system");
++	wil_dbg_pm(wil, "suspend: %s\n", is_runtime ? "runtime" : "system");
+ 
+ 	/* if netif up, hardware is alive, shut it down */
+ 	if (ndev->flags & IFF_UP) {
+@@ -86,7 +84,7 @@ int wil_suspend(struct wil6210_priv *wil, bool is_runtime)
+ 		rc = wil->platform_ops.suspend(wil->platform_handle);
+ 
+ out:
+-	wil_dbg_pm(wil, "%s(%s) => %d\n", __func__,
++	wil_dbg_pm(wil, "suspend: %s => %d\n",
+ 		   is_runtime ? "runtime" : "system", rc);
+ 	return rc;
+ }
+@@ -96,8 +94,7 @@ int wil_resume(struct wil6210_priv *wil, bool is_runtime)
+ 	int rc = 0;
+ 	struct net_device *ndev = wil_to_ndev(wil);
+ 
+-	wil_dbg_pm(wil, "%s(%s)\n", __func__,
+-		   is_runtime ? "runtime" : "system");
++	wil_dbg_pm(wil, "resume: %s\n", is_runtime ? "runtime" : "system");
+ 
+ 	if (wil->platform_ops.resume) {
+ 		rc = wil->platform_ops.resume(wil->platform_handle);
+@@ -115,7 +112,7 @@ int wil_resume(struct wil6210_priv *wil, bool is_runtime)
+ 		rc = wil_up(wil);
+ 
+ out:
+-	wil_dbg_pm(wil, "%s(%s) => %d\n", __func__,
++	wil_dbg_pm(wil, "resume: %s => %d\n",
+ 		   is_runtime ? "runtime" : "system", rc);
+ 	return rc;
+ }
+--- a/drivers/net/wireless/ath/wil6210/pmc.c
++++ b/drivers/net/wireless/ath/wil6210/pmc.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2015 Qualcomm Atheros, Inc.
++ * Copyright (c) 2012-2015,2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -60,7 +60,7 @@ void wil_pmc_alloc(struct wil6210_priv *wil,
+ 
+ 	if (wil_is_pmc_allocated(pmc)) {
+ 		/* sanity check */
+-		wil_err(wil, "%s: ERROR pmc is already allocated\n", __func__);
++		wil_err(wil, "ERROR pmc is already allocated\n");
+ 		goto no_release_err;
+ 	}
+ 	if ((num_descriptors <= 0) || (descriptor_size <= 0)) {
+@@ -90,21 +90,20 @@ void wil_pmc_alloc(struct wil6210_priv *wil,
+ 	pmc->num_descriptors = num_descriptors;
+ 	pmc->descriptor_size = descriptor_size;
+ 
+-	wil_dbg_misc(wil, "%s: %d descriptors x %d bytes each\n",
+-		     __func__, num_descriptors, descriptor_size);
++	wil_dbg_misc(wil, "pmc_alloc: %d descriptors x %d bytes each\n",
++		     num_descriptors, descriptor_size);
+ 
+ 	/* allocate descriptors info list in pmc context*/
+ 	pmc->descriptors = kcalloc(num_descriptors,
+ 				  sizeof(struct desc_alloc_info),
+ 				  GFP_KERNEL);
+ 	if (!pmc->descriptors) {
+-		wil_err(wil, "%s: ERROR allocating pmc skb list\n", __func__);
++		wil_err(wil, "ERROR allocating pmc skb list\n");
+ 		goto no_release_err;
+ 	}
+ 
+-	wil_dbg_misc(wil,
+-		     "%s: allocated descriptors info list %p\n",
+-		     __func__, pmc->descriptors);
++	wil_dbg_misc(wil, "pmc_alloc: allocated descriptors info list %p\n",
++		     pmc->descriptors);
+ 
+ 	/* Allocate pring buffer and descriptors.
+ 	 * vring->va should be aligned on its size rounded up to power of 2
+@@ -116,15 +115,14 @@ void wil_pmc_alloc(struct wil6210_priv *wil,
+ 			GFP_KERNEL);
+ 
+ 	wil_dbg_misc(wil,
+-		     "%s: allocated pring %p => %pad. %zd x %d = total %zd bytes\n",
+-		     __func__,
++		     "pmc_alloc: allocated pring %p => %pad. %zd x %d = total %zd bytes\n",
+ 		     pmc->pring_va, &pmc->pring_pa,
+ 		     sizeof(struct vring_tx_desc),
+ 		     num_descriptors,
+ 		     sizeof(struct vring_tx_desc) * num_descriptors);
+ 
+ 	if (!pmc->pring_va) {
+-		wil_err(wil, "%s: ERROR allocating pmc pring\n", __func__);
++		wil_err(wil, "ERROR allocating pmc pring\n");
+ 		goto release_pmc_skb_list;
+ 	}
+ 
+@@ -143,9 +141,7 @@ void wil_pmc_alloc(struct wil6210_priv *wil,
+ 			GFP_KERNEL);
+ 
+ 		if (unlikely(!pmc->descriptors[i].va)) {
+-			wil_err(wil,
+-				"%s: ERROR allocating pmc descriptor %d",
+-				__func__, i);
++			wil_err(wil, "ERROR allocating pmc descriptor %d", i);
+ 			goto release_pmc_skbs;
+ 		}
+ 
+@@ -165,21 +161,21 @@ void wil_pmc_alloc(struct wil6210_priv *wil,
+ 		*_d = *d;
+ 	}
+ 
+-	wil_dbg_misc(wil, "%s: allocated successfully\n", __func__);
++	wil_dbg_misc(wil, "pmc_alloc: allocated successfully\n");
+ 
+ 	pmc_cmd.op = WMI_PMC_ALLOCATE;
+ 	pmc_cmd.ring_size = cpu_to_le16(pmc->num_descriptors);
+ 	pmc_cmd.mem_base = cpu_to_le64(pmc->pring_pa);
+ 
+-	wil_dbg_misc(wil, "%s: send WMI_PMC_CMD with ALLOCATE op\n", __func__);
++	wil_dbg_misc(wil, "pmc_alloc: send WMI_PMC_CMD with ALLOCATE op\n");
+ 	pmc->last_cmd_status = wmi_send(wil,
+ 					WMI_PMC_CMDID,
+ 					&pmc_cmd,
+ 					sizeof(pmc_cmd));
+ 	if (pmc->last_cmd_status) {
+ 		wil_err(wil,
+-			"%s: WMI_PMC_CMD with ALLOCATE op failed with status %d",
+-			__func__, pmc->last_cmd_status);
++			"WMI_PMC_CMD with ALLOCATE op failed with status %d",
++			pmc->last_cmd_status);
+ 		goto release_pmc_skbs;
+ 	}
+ 
+@@ -188,7 +184,7 @@ void wil_pmc_alloc(struct wil6210_priv *wil,
+ 	return;
+ 
+ release_pmc_skbs:
+-	wil_err(wil, "%s: exit on error: Releasing skbs...\n", __func__);
++	wil_err(wil, "exit on error: Releasing skbs...\n");
+ 	for (i = 0; pmc->descriptors[i].va && i < num_descriptors; i++) {
+ 		dma_free_coherent(dev,
+ 				  descriptor_size,
+@@ -197,7 +193,7 @@ release_pmc_skbs:
+ 
+ 		pmc->descriptors[i].va = NULL;
+ 	}
+-	wil_err(wil, "%s: exit on error: Releasing pring...\n", __func__);
++	wil_err(wil, "exit on error: Releasing pring...\n");
+ 
+ 	dma_free_coherent(dev,
+ 			  sizeof(struct vring_tx_desc) * num_descriptors,
+@@ -207,8 +203,7 @@ release_pmc_skbs:
+ 	pmc->pring_va = NULL;
+ 
+ release_pmc_skb_list:
+-	wil_err(wil, "%s: exit on error: Releasing descriptors info list...\n",
+-		__func__);
++	wil_err(wil, "exit on error: Releasing descriptors info list...\n");
+ 	kfree(pmc->descriptors);
+ 	pmc->descriptors = NULL;
+ 
+@@ -232,24 +227,23 @@ void wil_pmc_free(struct wil6210_priv *wil, int send_pmc_cmd)
+ 	pmc->last_cmd_status = 0;
+ 
+ 	if (!wil_is_pmc_allocated(pmc)) {
+-		wil_dbg_misc(wil, "%s: Error, can't free - not allocated\n",
+-			     __func__);
++		wil_dbg_misc(wil,
++			     "pmc_free: Error, can't free - not allocated\n");
+ 		pmc->last_cmd_status = -EPERM;
+ 		mutex_unlock(&pmc->lock);
+ 		return;
+ 	}
+ 
+ 	if (send_pmc_cmd) {
+-		wil_dbg_misc(wil, "%s: send WMI_PMC_CMD with RELEASE op\n",
+-			     __func__);
++		wil_dbg_misc(wil, "send WMI_PMC_CMD with RELEASE op\n");
+ 		pmc_cmd.op = WMI_PMC_RELEASE;
+ 		pmc->last_cmd_status =
+ 				wmi_send(wil, WMI_PMC_CMDID, &pmc_cmd,
+ 					 sizeof(pmc_cmd));
+ 		if (pmc->last_cmd_status) {
+ 			wil_err(wil,
+-				"%s WMI_PMC_CMD with RELEASE op failed, status %d",
+-				__func__, pmc->last_cmd_status);
++				"WMI_PMC_CMD with RELEASE op failed, status %d",
++				pmc->last_cmd_status);
+ 			/* There's nothing we can do with this error.
+ 			 * Normally, it should never occur.
+ 			 * Continue to freeing all memory allocated for pmc.
+@@ -261,8 +255,8 @@ void wil_pmc_free(struct wil6210_priv *wil, int send_pmc_cmd)
+ 		size_t buf_size = sizeof(struct vring_tx_desc) *
+ 				  pmc->num_descriptors;
+ 
+-		wil_dbg_misc(wil, "%s: free pring va %p\n",
+-			     __func__, pmc->pring_va);
++		wil_dbg_misc(wil, "pmc_free: free pring va %p\n",
++			     pmc->pring_va);
+ 		dma_free_coherent(dev, buf_size, pmc->pring_va, pmc->pring_pa);
+ 
+ 		pmc->pring_va = NULL;
+@@ -281,11 +275,11 @@ void wil_pmc_free(struct wil6210_priv *wil, int send_pmc_cmd)
+ 					  pmc->descriptors[i].pa);
+ 			pmc->descriptors[i].va = NULL;
+ 		}
+-		wil_dbg_misc(wil, "%s: free descriptor info %d/%d\n",
+-			     __func__, i, pmc->num_descriptors);
++		wil_dbg_misc(wil, "pmc_free: free descriptor info %d/%d\n", i,
++			     pmc->num_descriptors);
+ 		wil_dbg_misc(wil,
+-			     "%s: free pmc descriptors info list %p\n",
+-			     __func__, pmc->descriptors);
++			     "pmc_free: free pmc descriptors info list %p\n",
++			     pmc->descriptors);
+ 		kfree(pmc->descriptors);
+ 		pmc->descriptors = NULL;
+ 	} else {
+@@ -301,7 +295,7 @@ void wil_pmc_free(struct wil6210_priv *wil, int send_pmc_cmd)
+  */
+ int wil_pmc_last_cmd_status(struct wil6210_priv *wil)
+ {
+-	wil_dbg_misc(wil, "%s: status %d\n", __func__,
++	wil_dbg_misc(wil, "pmc_last_cmd_status: status %d\n",
+ 		     wil->pmc.last_cmd_status);
+ 
+ 	return wil->pmc.last_cmd_status;
+@@ -324,7 +318,7 @@ ssize_t wil_pmc_read(struct file *filp, char __user *buf, size_t count,
+ 	mutex_lock(&pmc->lock);
+ 
+ 	if (!wil_is_pmc_allocated(pmc)) {
+-		wil_err(wil, "%s: error, pmc is not allocated!\n", __func__);
++		wil_err(wil, "error, pmc is not allocated!\n");
+ 		pmc->last_cmd_status = -EPERM;
+ 		mutex_unlock(&pmc->lock);
+ 		return -EPERM;
+@@ -333,8 +327,8 @@ ssize_t wil_pmc_read(struct file *filp, char __user *buf, size_t count,
+ 	pmc_size = pmc->descriptor_size * pmc->num_descriptors;
+ 
+ 	wil_dbg_misc(wil,
+-		     "%s: size %u, pos %lld\n",
+-		     __func__, (unsigned)count, *f_pos);
++		     "pmc_read: size %u, pos %lld\n",
++		     (u32)count, *f_pos);
+ 
+ 	pmc->last_cmd_status = 0;
+ 
+@@ -343,15 +337,16 @@ ssize_t wil_pmc_read(struct file *filp, char __user *buf, size_t count,
+ 	offset = *f_pos - (idx * pmc->descriptor_size);
+ 
+ 	if (*f_pos >= pmc_size) {
+-		wil_dbg_misc(wil, "%s: reached end of pmc buf: %lld >= %u\n",
+-			     __func__, *f_pos, (unsigned)pmc_size);
++		wil_dbg_misc(wil,
++			     "pmc_read: reached end of pmc buf: %lld >= %u\n",
++			     *f_pos, (u32)pmc_size);
+ 		pmc->last_cmd_status = -ERANGE;
+ 		goto out;
+ 	}
+ 
+ 	wil_dbg_misc(wil,
+-		     "%s: read from pos %lld (descriptor %llu, offset %llu) %zu bytes\n",
+-		     __func__, *f_pos, idx, offset, count);
++		     "pmc_read: read from pos %lld (descriptor %llu, offset %llu) %zu bytes\n",
++		     *f_pos, idx, offset, count);
+ 
+ 	/* if no errors, return the copied byte count */
+ 	retval = simple_read_from_buffer(buf,
+--- a/drivers/net/wireless/ath/wil6210/rx_reorder.c
++++ b/drivers/net/wireless/ath/wil6210/rx_reorder.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2014-2016 Qualcomm Atheros, Inc.
++ * Copyright (c) 2014-2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -349,8 +349,8 @@ __acquires(&sta->tid_rx_lock) __releases(&sta->tid_rx_lock)
+ 	rc = wmi_addba_rx_resp(wil, cid, tid, dialog_token, status,
+ 			       agg_amsdu, agg_wsize, agg_timeout);
+ 	if (rc || (status != WLAN_STATUS_SUCCESS)) {
+-		wil_err(wil, "%s: do not apply ba, rc(%d), status(%d)\n",
+-			__func__, rc, status);
++		wil_err(wil, "do not apply ba, rc(%d), status(%d)\n", rc,
++			status);
+ 		goto out;
+ 	}
+ 
+@@ -387,7 +387,7 @@ int wil_addba_tx_request(struct wil6210_priv *wil, u8 ringid, u16 wsize)
+ 	txdata->addba_in_progress = true;
+ 	rc = wmi_addba(wil, ringid, agg_wsize, agg_timeout);
+ 	if (rc) {
+-		wil_err(wil, "%s: wmi_addba failed, rc (%d)", __func__, rc);
++		wil_err(wil, "wmi_addba failed, rc (%d)", rc);
+ 		txdata->addba_in_progress = false;
+ 	}
+ 
+--- a/drivers/net/wireless/ath/wil6210/txrx.c
++++ b/drivers/net/wireless/ath/wil6210/txrx.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2012-2016 Qualcomm Atheros, Inc.
++ * Copyright (c) 2012-2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -115,7 +115,7 @@ static int wil_vring_alloc(struct wil6210_priv *wil, struct vring *vring)
+ 	size_t sz = vring->size * sizeof(vring->va[0]);
+ 	uint i;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "vring_alloc:\n");
+ 
+ 	BUILD_BUG_ON(sizeof(vring->va[0]) != 32);
+ 
+@@ -765,7 +765,7 @@ void wil_rx_handle(struct wil6210_priv *wil, int *quota)
+ 		wil_err(wil, "Rx IRQ while Rx not yet initialized\n");
+ 		return;
+ 	}
+-	wil_dbg_txrx(wil, "%s()\n", __func__);
++	wil_dbg_txrx(wil, "rx_handle\n");
+ 	while ((*quota > 0) && (NULL != (skb = wil_vring_reap_rx(wil, v)))) {
+ 		(*quota)--;
+ 
+@@ -788,7 +788,7 @@ int wil_rx_init(struct wil6210_priv *wil, u16 size)
+ 	struct vring *vring = &wil->vring_rx;
+ 	int rc;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "rx_init\n");
+ 
+ 	if (vring->va) {
+ 		wil_err(wil, "Rx ring already allocated\n");
+@@ -819,7 +819,7 @@ void wil_rx_fini(struct wil6210_priv *wil)
+ {
+ 	struct vring *vring = &wil->vring_rx;
+ 
+-	wil_dbg_misc(wil, "%s()\n", __func__);
++	wil_dbg_misc(wil, "rx_fini\n");
+ 
+ 	if (vring->va)
+ 		wil_vring_free(wil, vring, 0);
+@@ -871,7 +871,7 @@ int wil_vring_init_tx(struct wil6210_priv *wil, int id, int size,
+ 	struct vring *vring = &wil->vring_tx[id];
+ 	struct vring_tx_data *txdata = &wil->vring_tx_data[id];
+ 
+-	wil_dbg_misc(wil, "%s() max_mpdu_size %d\n", __func__,
++	wil_dbg_misc(wil, "vring_init_tx: max_mpdu_size %d\n",
+ 		     cmd.vring_cfg.tx_sw_ring.max_mpdu_size);
+ 	lockdep_assert_held(&wil->mutex);
+ 
+@@ -951,7 +951,7 @@ int wil_vring_init_bcast(struct wil6210_priv *wil, int id, int size)
+ 	struct vring *vring = &wil->vring_tx[id];
+ 	struct vring_tx_data *txdata = &wil->vring_tx_data[id];
+ 
+-	wil_dbg_misc(wil, "%s() max_mpdu_size %d\n", __func__,
++	wil_dbg_misc(wil, "vring_init_bcast: max_mpdu_size %d\n",
+ 		     cmd.vring_cfg.tx_sw_ring.max_mpdu_size);
+ 	lockdep_assert_held(&wil->mutex);
+ 
+@@ -1013,7 +1013,7 @@ void wil_vring_fini_tx(struct wil6210_priv *wil, int id)
+ 	if (!vring->va)
+ 		return;
+ 
+-	wil_dbg_misc(wil, "%s() id=%d\n", __func__, id);
++	wil_dbg_misc(wil, "vring_fini_tx: id=%d\n", id);
+ 
+ 	spin_lock_bh(&txdata->lock);
+ 	txdata->dot1x_open = false;
+@@ -1052,12 +1052,14 @@ static struct vring *wil_find_tx_ucast(struct wil6210_priv *wil,
+ 			struct vring *v = &wil->vring_tx[i];
+ 			struct vring_tx_data *txdata = &wil->vring_tx_data[i];
+ 
+-			wil_dbg_txrx(wil, "%s(%pM) -> [%d]\n",
+-				     __func__, eth->h_dest, i);
++			wil_dbg_txrx(wil, "find_tx_ucast: (%pM) -> [%d]\n",
++				     eth->h_dest, i);
+ 			if (v->va && txdata->enabled) {
+ 				return v;
+ 			} else {
+-				wil_dbg_txrx(wil, "vring[%d] not valid\n", i);
++				wil_dbg_txrx(wil,
++					     "find_tx_ucast: vring[%d] not valid\n",
++					     i);
+ 				return NULL;
+ 			}
+ 		}
+@@ -1393,8 +1395,8 @@ static int __wil_tx_vring_tso(struct wil6210_priv *wil, struct vring *vring,
+ 	int gso_type;
+ 	int rc = -EINVAL;
+ 
+-	wil_dbg_txrx(wil, "%s() %d bytes to vring %d\n",
+-		     __func__, skb->len, vring_index);
++	wil_dbg_txrx(wil, "tx_vring_tso: %d bytes to vring %d\n", skb->len,
++		     vring_index);
+ 
+ 	if (unlikely(!txdata->enabled))
+ 		return -EINVAL;
+@@ -1663,8 +1665,8 @@ static int __wil_tx_vring(struct wil6210_priv *wil, struct vring *vring,
+ 	bool mcast = (vring_index == wil->bcast_vring);
+ 	uint len = skb_headlen(skb);
+ 
+-	wil_dbg_txrx(wil, "%s() %d bytes to vring %d\n",
+-		     __func__, skb->len, vring_index);
++	wil_dbg_txrx(wil, "tx_vring: %d bytes to vring %d\n", skb->len,
++		     vring_index);
+ 
+ 	if (unlikely(!txdata->enabled))
+ 		return -EINVAL;
+@@ -1904,7 +1906,7 @@ netdev_tx_t wil_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+ 	static bool pr_once_fw;
+ 	int rc;
+ 
+-	wil_dbg_txrx(wil, "%s()\n", __func__);
++	wil_dbg_txrx(wil, "start_xmit\n");
+ 	if (unlikely(!test_bit(wil_status_fwready, wil->status))) {
+ 		if (!pr_once_fw) {
+ 			wil_err(wil, "FW not ready\n");
+@@ -2002,7 +2004,7 @@ int wil_tx_complete(struct wil6210_priv *wil, int ringid)
+ 		return 0;
+ 	}
+ 
+-	wil_dbg_txrx(wil, "%s(%d)\n", __func__, ringid);
++	wil_dbg_txrx(wil, "tx_complete: (%d)\n", ringid);
+ 
+ 	used_before_complete = wil_vring_used_tx(vring);
+ 
+--- a/drivers/net/wireless/ath/wil6210/wil_crash_dump.c
++++ b/drivers/net/wireless/ath/wil6210/wil_crash_dump.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (c) 2015 Qualcomm Atheros, Inc.
++ * Copyright (c) 2015,2017 Qualcomm Atheros, Inc.
+  *
+  * Permission to use, copy, modify, and/or distribute this software for any
+  * purpose with or without fee is hereby granted, provided that the above
+@@ -62,13 +62,13 @@ int wil_fw_copy_crash_dump(struct wil6210_priv *wil, void *dest, u32 size)
+ 	u32 host_min, dump_size, offset, len;
+ 
+ 	if (wil_fw_get_crash_dump_bounds(wil, &dump_size, &host_min)) {
+-		wil_err(wil, "%s: fail to obtain crash dump size\n", __func__);
++		wil_err(wil, "fail to obtain crash dump size\n");
+ 		return -EINVAL;
+ 	}
+ 
+ 	if (dump_size > size) {
+-		wil_err(wil, "%s: not enough space for dump. Need %d have %d\n",
+-			__func__, dump_size, size);
++		wil_err(wil, "not enough space for dump. Need %d have %d\n",
++			dump_size, size);
+ 		return -EINVAL;
+ 	}
+ 
+@@ -83,8 +83,9 @@ int wil_fw_copy_crash_dump(struct wil6210_priv *wil, void *dest, u32 size)
+ 		len = map->to - map->from;
+ 		offset = map->host - host_min;
+ 
+-		wil_dbg_misc(wil, "%s() - dump %s, size %d, offset %d\n",
+-			     __func__, fw_mapping[i].name, len, offset);
++		wil_dbg_misc(wil,
++			     "fw_copy_crash_dump: - dump %s, size %d, offset %d\n",
++			     fw_mapping[i].name, len, offset);
+ 
+ 		wil_memcpy_fromio_32((void * __force)(dest + offset),
+ 				     (const void __iomem * __force)data, len);
+@@ -99,7 +100,7 @@ void wil_fw_core_dump(struct wil6210_priv *wil)
+ 	u32 fw_dump_size;
+ 
+ 	if (wil_fw_get_crash_dump_bounds(wil, &fw_dump_size, NULL)) {
+-		wil_err(wil, "%s: fail to get fw dump size\n", __func__);
++		wil_err(wil, "fail to get fw dump size\n");
+ 		return;
+ 	}
+ 
+@@ -115,6 +116,5 @@ void wil_fw_core_dump(struct wil6210_priv *wil)
+ 	 * after 5 min
+ 	 */
+ 	dev_coredumpv(wil_to_dev(wil), fw_dump_data, fw_dump_size, GFP_KERNEL);
+-	wil_info(wil, "%s: fw core dumped, size %d bytes\n", __func__,
+-		 fw_dump_size);
++	wil_info(wil, "fw core dumped, size %d bytes\n", fw_dump_size);
+ }
+--- a/drivers/net/wireless/ath/wil6210/wmi.c
++++ b/drivers/net/wireless/ath/wil6210/wmi.c
+@@ -561,8 +561,8 @@ static void wmi_evt_connect(struct wil6210_priv *wil, int id, void *d, int len)
+ 	} else if ((wdev->iftype == NL80211_IFTYPE_AP) ||
+ 		   (wdev->iftype == NL80211_IFTYPE_P2P_GO)) {
+ 		if (wil->sta[evt->cid].status != wil_sta_unused) {
+-			wil_err(wil, "%s: AP: Invalid status %d for CID %d\n",
+-				__func__, wil->sta[evt->cid].status, evt->cid);
++			wil_err(wil, "AP: Invalid status %d for CID %d\n",
++				wil->sta[evt->cid].status, evt->cid);
+ 			mutex_unlock(&wil->mutex);
+ 			return;
+ 		}
+@@ -575,22 +575,19 @@ static void wmi_evt_connect(struct wil6210_priv *wil, int id, void *d, int len)
+ 
+ 	rc = wil_tx_init(wil, evt->cid);
+ 	if (rc) {
+-		wil_err(wil, "%s: config tx vring failed for CID %d, rc (%d)\n",
+-			__func__, evt->cid, rc);
++		wil_err(wil, "config tx vring failed for CID %d, rc (%d)\n",
++			evt->cid, rc);
+ 		wmi_disconnect_sta(wil, wil->sta[evt->cid].addr,
+ 				   WLAN_REASON_UNSPECIFIED, false, false);
+ 	} else {
+-		wil_info(wil, "%s: successful connection to CID %d\n",
+-			 __func__, evt->cid);
++		wil_info(wil, "successful connection to CID %d\n", evt->cid);
+ 	}
+ 
+ 	if ((wdev->iftype == NL80211_IFTYPE_STATION) ||
+ 	    (wdev->iftype == NL80211_IFTYPE_P2P_CLIENT)) {
+ 		if (rc) {
+ 			netif_carrier_off(ndev);
+-			wil_err(wil,
+-				"%s: cfg80211_connect_result with failure\n",
+-				__func__);
++			wil_err(wil, "cfg80211_connect_result with failure\n");
+ 			cfg80211_connect_result(ndev, evt->bssid, NULL, 0,
+ 						NULL, 0,
+ 						WLAN_STATUS_UNSPECIFIED_FAILURE,
+@@ -623,8 +620,8 @@ static void wmi_evt_connect(struct wil6210_priv *wil, int id, void *d, int len)
+ 
+ 		cfg80211_new_sta(ndev, evt->bssid, &sinfo, GFP_KERNEL);
+ 	} else {
+-		wil_err(wil, "%s: unhandled iftype %d for CID %d\n",
+-			__func__, wdev->iftype, evt->cid);
++		wil_err(wil, "unhandled iftype %d for CID %d\n", wdev->iftype,
++			evt->cid);
+ 		goto out;
+ 	}
+ 
+@@ -983,8 +980,8 @@ void wmi_recv_cmd(struct wil6210_priv *wil)
+ 		      offsetof(struct wil6210_mbox_ctl, rx.tail), r->tail);
+ 
+ 		if (immed_reply) {
+-			wil_dbg_wmi(wil, "%s: Complete WMI 0x%04x\n",
+-				    __func__, wil->reply_id);
++			wil_dbg_wmi(wil, "recv_cmd: Complete WMI 0x%04x\n",
++				    wil->reply_id);
+ 			kfree(evt);
+ 			num_immed_reply++;
+ 			complete(&wil->wmi_call);
+@@ -998,7 +995,7 @@ void wmi_recv_cmd(struct wil6210_priv *wil)
+ 		}
+ 	}
+ 	/* normally, 1 event per IRQ should be processed */
+-	wil_dbg_wmi(wil, "%s -> %d events queued, %d completed\n", __func__,
++	wil_dbg_wmi(wil, "recv_cmd: -> %d events queued, %d completed\n",
+ 		    n - num_immed_reply, num_immed_reply);
+ }
+ 
+@@ -1424,7 +1421,7 @@ int wmi_rxon(struct wil6210_priv *wil, bool on)
+ 		struct wmi_listen_started_event evt;
+ 	} __packed reply;
+ 
+-	wil_info(wil, "%s(%s)\n", __func__, on ? "on" : "off");
++	wil_info(wil, "(%s)\n", on ? "on" : "off");
+ 
+ 	if (on) {
+ 		rc = wmi_call(wil, WMI_START_LISTEN_CMDID, NULL, 0,
+@@ -1544,7 +1541,7 @@ int wmi_disconnect_sta(struct wil6210_priv *wil, const u8 *mac,
+ 		struct wmi_disconnect_event evt;
+ 	} __packed reply;
+ 
+-	wil_dbg_wmi(wil, "%s(%pM, reason %d)\n", __func__, mac, reason);
++	wil_dbg_wmi(wil, "disconnect_sta: (%pM, reason %d)\n", mac, reason);
+ 
+ 	if (del_sta) {
+ 		ether_addr_copy(del_sta_cmd.dst_mac, mac);
+@@ -1589,8 +1586,8 @@ int wmi_addba(struct wil6210_priv *wil, u8 ringid, u8 size, u16 timeout)
+ 		.amsdu = 0,
+ 	};
+ 
+-	wil_dbg_wmi(wil, "%s(ring %d size %d timeout %d)\n", __func__,
+-		    ringid, size, timeout);
++	wil_dbg_wmi(wil, "addba: (ring %d size %d timeout %d)\n", ringid, size,
++		    timeout);
+ 
+ 	return wmi_send(wil, WMI_VRING_BA_EN_CMDID, &cmd, sizeof(cmd));
+ }
+@@ -1602,8 +1599,7 @@ int wmi_delba_tx(struct wil6210_priv *wil, u8 ringid, u16 reason)
+ 		.reason = cpu_to_le16(reason),
+ 	};
+ 
+-	wil_dbg_wmi(wil, "%s(ring %d reason %d)\n", __func__,
+-		    ringid, reason);
++	wil_dbg_wmi(wil, "delba_tx: (ring %d reason %d)\n", ringid, reason);
+ 
+ 	return wmi_send(wil, WMI_VRING_BA_DIS_CMDID, &cmd, sizeof(cmd));
+ }
+@@ -1615,8 +1611,8 @@ int wmi_delba_rx(struct wil6210_priv *wil, u8 cidxtid, u16 reason)
+ 		.reason = cpu_to_le16(reason),
+ 	};
+ 
+-	wil_dbg_wmi(wil, "%s(CID %d TID %d reason %d)\n", __func__,
+-		    cidxtid & 0xf, (cidxtid >> 4) & 0xf, reason);
++	wil_dbg_wmi(wil, "delba_rx: (CID %d TID %d reason %d)\n", cidxtid & 0xf,
++		    (cidxtid >> 4) & 0xf, reason);
+ 
+ 	return wmi_send(wil, WMI_RCP_DELBA_CMDID, &cmd, sizeof(cmd));
+ }
+@@ -1790,7 +1786,7 @@ void wmi_event_flush(struct wil6210_priv *wil)
+ {
+ 	struct pending_wmi_event *evt, *t;
+ 
+-	wil_dbg_wmi(wil, "%s()\n", __func__);
++	wil_dbg_wmi(wil, "event_flush\n");
+ 
+ 	list_for_each_entry_safe(evt, t, &wil->pending_wmi_ev, list) {
+ 		list_del(&evt->list);
+@@ -1831,8 +1827,8 @@ static void wmi_event_handle(struct wil6210_priv *wil,
+ 			WARN_ON(wil->reply_buf);
+ 			wmi_evt_call_handler(wil, id, evt_data,
+ 					     len - sizeof(*wmi));
+-			wil_dbg_wmi(wil, "%s: Complete WMI 0x%04x\n",
+-				    __func__, id);
++			wil_dbg_wmi(wil, "event_handle: Complete WMI 0x%04x\n",
++				    id);
+ 			complete(&wil->wmi_call);
+ 			return;
+ 		}
+@@ -1879,11 +1875,11 @@ void wmi_event_worker(struct work_struct *work)
+ 	struct pending_wmi_event *evt;
+ 	struct list_head *lh;
+ 
+-	wil_dbg_wmi(wil, "Start %s\n", __func__);
++	wil_dbg_wmi(wil, "event_worker: Start\n");
+ 	while ((lh = next_wmi_ev(wil)) != NULL) {
+ 		evt = list_entry(lh, struct pending_wmi_event, list);
+ 		wmi_event_handle(wil, &evt->event.hdr);
+ 		kfree(evt);
+ 	}
+-	wil_dbg_wmi(wil, "Finished %s\n", __func__);
++	wil_dbg_wmi(wil, "event_worker: Finished\n");
+ }
