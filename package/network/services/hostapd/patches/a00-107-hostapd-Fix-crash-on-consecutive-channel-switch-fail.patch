@@ -1,0 +1,12 @@
+--- a/src/ap/ap_drv_ops.h
++++ b/src/ap/ap_drv_ops.h
+@@ -264,7 +264,8 @@ static inline const char * hostapd_drv_g
+ static inline int hostapd_drv_switch_channel(struct hostapd_data *hapd,
+ 					     struct csa_settings *settings)
+ {
+-	if (hapd->driver == NULL || hapd->driver->switch_channel == NULL)
++	if (hapd->driver == NULL || hapd->driver->switch_channel == NULL ||
++	    hapd->drv_priv == NULL)
+ 		return -ENOTSUP;
+ 
+ 	return hapd->driver->switch_channel(hapd->drv_priv, settings);

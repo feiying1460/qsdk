@@ -1,0 +1,34 @@
+From abe9d1b0739857f4a0d25005f9f0523153a6fe23 Mon Sep 17 00:00:00 2001
+From: Ben Hutchings <ben@decadent.org.uk>
+Date: Thu, 28 Jan 2016 01:28:32 +0000
+Subject: [PATCH] Check for unsupported PD exclusion configuration in
+ dhcpv6_parse_ia
+
+We currently only support PD exclusions that only affect bits 64-95 of
+the address, so we require:
+
+    32 <= PD prefix length < exclusion prefix length <= 64
+
+The first inequality was not validated, and this could result in a
+buffer overflow when generating the next request message.
+
+Signed-off-by: Ben Hutchings <ben@decadent.org.uk>
+---
+ src/dhcpv6.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/dhcpv6.c b/src/dhcpv6.c
+index c2a3e3d..2d8124f 100644
+--- a/src/dhcpv6.c
++++ b/src/dhcpv6.c
+@@ -1185,7 +1185,7 @@ static int dhcpv6_parse_ia(void *opt, vo
+ 				if (elen > 64)
+ 					elen = 64;
+ 
+-				if (elen <= 32 || elen <= entry.length) {
++				if (entry.length < 32 || elen <= entry.length) {
+ 					ok = false;
+ 					continue;
+ 				}
+--
+1.7.9.5

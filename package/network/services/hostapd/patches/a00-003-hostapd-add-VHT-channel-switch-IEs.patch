@@ -1,0 +1,90 @@
+--- a/src/ap/beacon.c
++++ b/src/ap/beacon.c
+@@ -338,6 +338,75 @@
+ }
+ 
+ 
++static u8 * hostapd_eid_wide_bw_chansw(struct hostapd_data *hapd, u8 *eid)
++{
++	struct hostapd_freq_params *params = &hapd->cs_freq_params;
++	u8 chan;
++
++	if (!params->freq)
++		return eid;
++
++	if (ieee80211_freq_to_chan(params->freq, &chan) ==
++		NUM_HOSTAPD_MODES)
++		return eid;
++
++	*eid++ = WLAN_EID_VHT_WIDE_BW_CHSWITCH;
++	*eid++ = 3;
++
++	switch (params->bandwidth) {
++	case 40:
++		*eid++ = VHT_CHANWIDTH_USE_HT;
++		break;
++	case 80:
++		*eid++ = VHT_CHANWIDTH_80MHZ;
++		break;
++	case 160:
++		*eid++ = VHT_CHANWIDTH_160MHZ;
++		break;
++	}
++	*eid++ = params->freq + params->sec_channel_offset * 10;
++	*eid++ = params->center_freq2;
++
++	return eid;
++}
++
++
++static u8 * hostapd_eid_vht_txpwr_env(struct hostapd_data *hapd, u8 *eid)
++{
++	struct hostapd_freq_params *params = &hapd->cs_freq_params;
++	struct hostapd_hw_modes *mode = hapd->iface->current_mode;
++	struct hostapd_channel_data *chan;
++	int i;
++	u8 channel;
++
++	if (!params->freq)
++		return eid;
++
++	if (ieee80211_freq_to_chan(params->freq, &channel) ==
++		NUM_HOSTAPD_MODES)
++		return eid;
++
++	for (i = 0; i < mode->num_channels; i++) {
++		if (mode->channels[i].freq == params->freq)
++			break;
++	}
++	if (i == mode->num_channels)
++		return eid;
++
++	chan = &mode->channels[i];
++
++	*eid++ = WLAN_EID_VHT_TRANSMIT_POWER_ENVELOPE;
++	*eid++ = 5;
++	*eid++ = 2;
++	*eid++ = chan->max_tx_power;
++	*eid++ = chan->max_tx_power;
++	*eid++ = chan->max_tx_power;
++	*eid++ = chan->max_tx_power;
++
++	return eid;
++}
++
++
+ static u8 * hostapd_add_csa_elems(struct hostapd_data *hapd, u8 *pos,
+ 				  u8 *start, unsigned int *csa_counter_off)
+ {
+@@ -354,6 +423,11 @@
+ 		*csa_counter_off = pos - start - 1;
+ 		pos = hostapd_eid_secondary_channel(hapd, pos);
+ 	}
++	if (hapd->cs_freq_params.bandwidth > 20 &&
++		hapd->cs_freq_params.vht_enabled) {
++		pos = hostapd_eid_wide_bw_chansw(hapd, pos);
++		pos = hostapd_eid_vht_txpwr_env(hapd, pos);
++	}
+ 
+ 	return pos;
+ }

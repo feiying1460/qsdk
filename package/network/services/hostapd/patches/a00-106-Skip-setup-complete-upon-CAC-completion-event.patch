@@ -1,0 +1,18 @@
+--- a/src/ap/dfs.c
++++ b/src/ap/dfs.c
+@@ -769,7 +769,14 @@ int hostapd_dfs_complete_cac(struct host
+ 				      chan_width, cf1, cf2,
+ 				      HOSTAPD_CHAN_DFS_AVAILABLE);
+ 			iface->cac_started = 0;
+-			hostapd_setup_interface_complete(iface, 0);
++			/*
++			 * Just mark the channel available when CAC completion
++			 * event is received in enabled state. CAC result could
++			 * have been propagated from other radio having the same
++			 * regulatory configuration.
++			 */
++			if (iface->state != HAPD_IFACE_ENABLED)
++				hostapd_setup_interface_complete(iface, 0);
+ 		}
+ 	}
+ 

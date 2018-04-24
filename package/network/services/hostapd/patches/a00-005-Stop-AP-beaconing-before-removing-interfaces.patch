@@ -1,0 +1,10 @@
+--- a/src/ap/hostapd.c
++++ b/src/ap/hostapd.c
+@@ -295,6 +295,7 @@ static void hostapd_free_hapd_data(struc
+ 	hostapd_deinit_wps(hapd);
+ 
+ 	authsrv_deinit(hapd);
++	hostapd_drv_stop_ap(hapd);
+ 
+ 	if (hapd->interface_added) {
+ 		hapd->interface_added = 0;

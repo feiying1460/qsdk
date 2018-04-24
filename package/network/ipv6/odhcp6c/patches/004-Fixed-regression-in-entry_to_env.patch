@@ -1,0 +1,47 @@
+From 1801580e39ceac0d7fec7adef892763c4da56906 Mon Sep 17 00:00:00 2001
+From: Ben Hutchings <ben@decadent.org.uk>
+Date: Thu, 28 Jan 2016 22:45:14 +0000
+Subject: [PATCH] Fix regression in entry_to_env()
+
+I broke entry_to_env() by incrementing the wrong variable in commit
+a6bbd1d7f5c2 ("Fix potential buffer overflow in entry_to_env").
+
+Signed-off-by: Ben Hutchings <ben@decadent.org.uk>
+---
+ src/script.c |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/src/script.c b/src/script.c
+index 3579331..5955e94 100644
+--- a/src/script.c
++++ b/src/script.c
+@@ -154,7 +154,7 @@ static void entry_to_env(const char *nam
+ 		buf_len += strlen(&buf[buf_len]);
+ 		if (type != ENTRY_HOST) {
+ 			snprintf(&buf[buf_len], 6, "/%"PRIu16, e[i].length);
+-			buf += strlen(&buf[buf_len]);
++			buf_len += strlen(&buf[buf_len]);
+ 			if (type == ENTRY_ROUTE) {
+ 				buf[buf_len++] = ',';
+ 				if (!IN6_IS_ADDR_UNSPECIFIED(&e[i].router)) {
+@@ -162,15 +162,15 @@ static void entry_to_env(const char *nam
+ 					buf_len += strlen(&buf[buf_len]);
+ 				}
+ 				snprintf(&buf[buf_len], 23, ",%u,%u", e[i].valid, e[i].priority);
+-				buf += strlen(&buf[buf_len]);
++				buf_len += strlen(&buf[buf_len]);
+ 			} else {
+ 				snprintf(&buf[buf_len], 23, ",%u,%u", e[i].preferred, e[i].valid);
+-				buf += strlen(&buf[buf_len]);
++				buf_len += strlen(&buf[buf_len]);
+ 			}
+ 
+ 			if (type == ENTRY_PREFIX && ntohl(e[i].iaid) != 1) {
+ 				snprintf(&buf[buf_len], 16, ",class=%08x", ntohl(e[i].iaid));
+-				buf += strlen(&buf[buf_len]);
++				buf_len += strlen(&buf[buf_len]);
+ 			}
+ 
+ 			if (type == ENTRY_PREFIX && e[i].priority) {
+--
+1.7.9.5

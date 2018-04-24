@@ -1,0 +1,194 @@
+--- a/src/ap/accounting.c
++++ b/src/ap/accounting.c
+@@ -164,19 +164,25 @@ static int accounting_sta_update_stats(s
+ 	if (hostapd_drv_read_sta_data(hapd, data, sta->addr))
+ 		return -1;
+ 
+-	if (sta->last_rx_bytes > data->rx_bytes)
+-		sta->acct_input_gigawords++;
+-	if (sta->last_tx_bytes > data->tx_bytes)
+-		sta->acct_output_gigawords++;
+-	sta->last_rx_bytes = data->rx_bytes;
+-	sta->last_tx_bytes = data->tx_bytes;
++	if (!data->bytes_64bit) {
++		/* Extend 32-bit counters from the driver to 64-bit counters */
++		if (sta->last_rx_bytes_lo > data->rx_bytes)
++			sta->last_rx_bytes_hi++;
++		sta->last_rx_bytes_lo = data->rx_bytes;
++
++		if (sta->last_tx_bytes_lo > data->tx_bytes)
++			sta->last_tx_bytes_hi++;
++		sta->last_tx_bytes_lo = data->tx_bytes;
++	}
+ 
+ 	hostapd_logger(hapd, sta->addr, HOSTAPD_MODULE_RADIUS,
+-		       HOSTAPD_LEVEL_DEBUG, "updated TX/RX stats: "
+-		       "Acct-Input-Octets=%lu Acct-Input-Gigawords=%u "
+-		       "Acct-Output-Octets=%lu Acct-Output-Gigawords=%u",
+-		       sta->last_rx_bytes, sta->acct_input_gigawords,
+-		       sta->last_tx_bytes, sta->acct_output_gigawords);
++		       HOSTAPD_LEVEL_DEBUG,
++		       "updated TX/RX stats: rx_bytes=%llu [%u:%u] tx_bytes=%llu [%u:%u] bytes_64bit=%d",
++		       data->rx_bytes, sta->last_rx_bytes_hi,
++		       sta->last_rx_bytes_lo,
++		       data->tx_bytes, sta->last_tx_bytes_hi,
++		       sta->last_tx_bytes_lo,
++		       data->bytes_64bit);
+ 
+ 	return 0;
+ }
+@@ -221,8 +227,10 @@ void accounting_sta_start(struct hostapd
+ 		       sta->acct_session_id_hi, sta->acct_session_id_lo);
+ 
+ 	os_get_reltime(&sta->acct_session_start);
+-	sta->last_rx_bytes = sta->last_tx_bytes = 0;
+-	sta->acct_input_gigawords = sta->acct_output_gigawords = 0;
++	sta->last_rx_bytes_hi = 0;
++	sta->last_rx_bytes_lo = 0;
++	sta->last_tx_bytes_hi = 0;
++	sta->last_tx_bytes_lo = 0;
+ 	hostapd_drv_sta_clear_stats(hapd, sta->addr);
+ 
+ 	if (!hapd->conf->radius->acct_server)
+@@ -252,7 +260,7 @@ static void accounting_sta_report(struct
+ 	struct hostap_sta_driver_data data;
+ 	struct os_reltime now_r, diff;
+ 	struct os_time now;
+-	u32 gigawords;
++	u64 bytes;
+ 
+ 	if (!hapd->conf->radius->acct_server)
+ 		return;
+@@ -287,37 +295,37 @@ static void accounting_sta_report(struct
+ 			wpa_printf(MSG_INFO, "Could not add Acct-Output-Packets");
+ 			goto fail;
+ 		}
++		if (data.bytes_64bit)
++			bytes = data.rx_bytes;
++		else
++			bytes = ((u64) sta->last_rx_bytes_hi << 32) |
++				sta->last_rx_bytes_lo;
+ 		if (!radius_msg_add_attr_int32(msg,
+ 					       RADIUS_ATTR_ACCT_INPUT_OCTETS,
+-					       data.rx_bytes)) {
++					       (u32) bytes)) {
+ 			wpa_printf(MSG_INFO, "Could not add Acct-Input-Octets");
+ 			goto fail;
+ 		}
+-		gigawords = sta->acct_input_gigawords;
+-#if __WORDSIZE == 64
+-		gigawords += data.rx_bytes >> 32;
+-#endif
+-		if (gigawords &&
+-		    !radius_msg_add_attr_int32(
+-			    msg, RADIUS_ATTR_ACCT_INPUT_GIGAWORDS,
+-			    gigawords)) {
++		if (!radius_msg_add_attr_int32(msg,
++					       RADIUS_ATTR_ACCT_INPUT_GIGAWORDS,
++					       (u32) (bytes >> 32))) {
+ 			wpa_printf(MSG_INFO, "Could not add Acct-Input-Gigawords");
+ 			goto fail;
+ 		}
++		if (data.bytes_64bit)
++			bytes = data.tx_bytes;
++		else
++			bytes = ((u64) sta->last_tx_bytes_hi << 32) |
++				sta->last_tx_bytes_lo;
+ 		if (!radius_msg_add_attr_int32(msg,
+ 					       RADIUS_ATTR_ACCT_OUTPUT_OCTETS,
+-					       data.tx_bytes)) {
++					       (u32) bytes)) {
+ 			wpa_printf(MSG_INFO, "Could not add Acct-Output-Octets");
+ 			goto fail;
+ 		}
+-		gigawords = sta->acct_output_gigawords;
+-#if __WORDSIZE == 64
+-		gigawords += data.tx_bytes >> 32;
+-#endif
+-		if (gigawords &&
+-		    !radius_msg_add_attr_int32(
+-			    msg, RADIUS_ATTR_ACCT_OUTPUT_GIGAWORDS,
+-			    gigawords)) {
++		if (!radius_msg_add_attr_int32(msg,
++					       RADIUS_ATTR_ACCT_OUTPUT_GIGAWORDS,
++					       (u32) (bytes >> 32))) {
+ 			wpa_printf(MSG_INFO, "Could not add Acct-Output-Gigawords");
+ 			goto fail;
+ 		}
+--- a/src/ap/ctrl_iface_ap.c
++++ b/src/ap/ctrl_iface_ap.c
+@@ -35,7 +35,7 @@ static int hostapd_get_sta_tx_rx(struct
+ 		return 0;
+ 
+ 	ret = os_snprintf(buf, buflen, "rx_packets=%lu\ntx_packets=%lu\n"
+-			  "rx_bytes=%lu\ntx_bytes=%lu\n",
++			  "rx_bytes=%llu\ntx_bytes=%llu\n",
+ 			  data.rx_packets, data.tx_packets,
+ 			  data.rx_bytes, data.tx_bytes);
+ 	if (os_snprintf_error(buflen, ret))
+--- a/src/ap/sta_info.h
++++ b/src/ap/sta_info.h
+@@ -107,10 +107,11 @@ struct sta_info {
+ 	int acct_terminate_cause; /* Acct-Terminate-Cause */
+ 	int acct_interim_interval; /* Acct-Interim-Interval */
+ 
+-	unsigned long last_rx_bytes;
+-	unsigned long last_tx_bytes;
+-	u32 acct_input_gigawords; /* Acct-Input-Gigawords */
+-	u32 acct_output_gigawords; /* Acct-Output-Gigawords */
++	/* For extending 32-bit driver counters to 64-bit counters */
++	u32 last_rx_bytes_hi;
++	u32 last_rx_bytes_lo;
++	u32 last_tx_bytes_hi;
++	u32 last_tx_bytes_lo;
+ 
+ 	u8 *challenge; /* IEEE 802.11 Shared Key Authentication Challenge */
+ 
+--- a/src/drivers/driver.h
++++ b/src/drivers/driver.h
+@@ -1310,7 +1310,9 @@ struct wpa_driver_capa {
+ struct hostapd_data;
+ 
+ struct hostap_sta_driver_data {
+-	unsigned long rx_packets, tx_packets, rx_bytes, tx_bytes;
++	unsigned long rx_packets, tx_packets;
++	unsigned long long rx_bytes, tx_bytes;
++	int bytes_64bit; /* whether 64-bit byte counters are supported */
+ 	unsigned long current_tx_rate;
+ 	unsigned long inactive_msec;
+ 	unsigned long flags;
+--- a/src/drivers/driver_nl80211.c
++++ b/src/drivers/driver_nl80211.c
+@@ -5236,6 +5236,8 @@ static int get_sta_handler(struct nl_msg
+ 		[NL80211_STA_INFO_RX_PACKETS] = { .type = NLA_U32 },
+ 		[NL80211_STA_INFO_TX_PACKETS] = { .type = NLA_U32 },
+ 		[NL80211_STA_INFO_TX_FAILED] = { .type = NLA_U32 },
++		[NL80211_STA_INFO_RX_BYTES64] = { .type = NLA_U64 },
++		[NL80211_STA_INFO_TX_BYTES64] = { .type = NLA_U64 },
+ 	};
+ 
+ 	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0),
+@@ -5261,10 +5263,23 @@ static int get_sta_handler(struct nl_msg
+ 	if (stats[NL80211_STA_INFO_INACTIVE_TIME])
+ 		data->inactive_msec =
+ 			nla_get_u32(stats[NL80211_STA_INFO_INACTIVE_TIME]);
++	/* For backwards compatibility, fetch the 32-bit counters first. */
+ 	if (stats[NL80211_STA_INFO_RX_BYTES])
+ 		data->rx_bytes = nla_get_u32(stats[NL80211_STA_INFO_RX_BYTES]);
+ 	if (stats[NL80211_STA_INFO_TX_BYTES])
+ 		data->tx_bytes = nla_get_u32(stats[NL80211_STA_INFO_TX_BYTES]);
++	if (stats[NL80211_STA_INFO_RX_BYTES64] &&
++	    stats[NL80211_STA_INFO_TX_BYTES64]) {
++		/*
++		 * The driver supports 64-bit counters, so use them to override
++		 * the 32-bit values.
++		 */
++		data->rx_bytes =
++			nla_get_u64(stats[NL80211_STA_INFO_RX_BYTES64]);
++		data->tx_bytes =
++			nla_get_u64(stats[NL80211_STA_INFO_TX_BYTES64]);
++		data->bytes_64bit = 1;
++	}
+ 	if (stats[NL80211_STA_INFO_RX_PACKETS])
+ 		data->rx_packets =
+ 			nla_get_u32(stats[NL80211_STA_INFO_RX_PACKETS]);
